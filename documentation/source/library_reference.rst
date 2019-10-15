@@ -2,6 +2,7 @@
 Library Reference
 #################
 
+
 Test Results
 ============
 
@@ -50,52 +51,18 @@ Interacting with the Simulator
 
 .. autoclass:: cocotb.clock.Clock
 
-
 Triggers
 --------
+See :ref:`simulator-triggers` for a list of sub-classes. Below are the internal
+classes used within ``cocotb``.
 
-Triggers are used to indicate when the scheduler should resume coroutine execution.
-Typically a coroutine will :keyword:`yield` a trigger or a list of triggers.
+.. currentmodule:: cocotb.triggers
 
-.. autoclass:: cocotb.triggers.Trigger
-
-Simulation Timing
-~~~~~~~~~~~~~~~~~
-
-.. autoclass:: cocotb.triggers.Timer
-
-.. autoclass:: cocotb.triggers.ReadOnly
-
-.. autoclass:: cocotb.triggers.NextTimeStep
-
-.. autoclass:: cocotb.triggers.ClockCycles
-
-Signal related
-~~~~~~~~~~~~~~
-
-.. autoclass:: cocotb.triggers.Edge
-
-.. autoclass:: cocotb.triggers.RisingEdge
-
-.. autoclass:: cocotb.triggers.FallingEdge
-
-
-Python Triggers
-~~~~~~~~~~~~~~~
-
-.. autoclass:: cocotb.triggers.Combine
+.. autoclass:: Trigger
     :members:
     :member-order: bysource
 
-.. autoclass:: cocotb.triggers.Event
-    :members:
-    :member-order: bysource
-
-.. autoclass:: cocotb.triggers.Lock
-    :members:
-    :member-order: bysource
-
-.. autoclass:: cocotb.triggers.Join
+.. autoclass:: GPITrigger
     :members:
     :member-order: bysource
 
@@ -118,6 +85,12 @@ Driver
     :private-members:
 
 .. autoclass:: cocotb.drivers.BusDriver
+    :members:
+    :member-order: bysource
+    :show-inheritance:
+    :private-members:
+
+.. autoclass:: cocotb.drivers.ValidatedBusDriver
     :members:
     :member-order: bysource
     :show-inheritance:

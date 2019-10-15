@@ -62,8 +62,8 @@ import cocotb.decorators
 from cocotb.triggers import (Trigger, GPITrigger, Timer, ReadOnly,
                              NextTimeStep, ReadWrite, Event, Join, NullTrigger)
 from cocotb.log import SimLog
-from cocotb.result import (TestComplete, create_error)
-from cocotb.utils import nullcontext
+from cocotb.result import TestComplete
+from cocotb import _py_compat
 
 # On python 3.7 onwards, `dict` is guaranteed to preserve insertion order.
 # Since `OrderedDict` is a little slower that `dict`, we prefer the latter
@@ -243,8 +243,7 @@ class Scheduler(object):
         self._pending_events = []   # Events we need to call set on once we've unwound
 
         self._terminate = False
-        self._test_result = None
-        self._entrypoint = None
+        self._test = None
         self._main_thread = threading.current_thread()
 
         self._is_reacting = False
@@ -285,7 +284,7 @@ class Scheduler(object):
             if self._timer1.primed:
                 self._timer1.unprime()
 
-            self._timer1.prime(self.begin_test)
+            self._timer1.prime(self._test_completed)
             self._trigger2coros = _ordered_dict()
             self._coro2trigger = _ordered_dict()
             self._terminate = False
@@ -293,10 +292,8 @@ class Scheduler(object):
             self._writes_pending.clear()
             self._mode = Scheduler._MODE_TERM
 
-    def begin_test(self, trigger=None):
-        """Called to initiate a test.
-
-        Could be called on start-up or from a callback.
+    def _test_completed(self, trigger=None):
+        """Called after a test and its cleanup have completed
         """
         if _debug:
             self.log.debug("begin_test called with trigger: %s" %
@@ -306,24 +303,30 @@ class Scheduler(object):
             ps.dump_stats("test_profile.pstat")
             ctx = profiling_context()
         else:
-            ctx = nullcontext()
+            ctx = _py_compat.nullcontext()
 
         with ctx:
             self._mode = Scheduler._MODE_NORMAL
             if trigger is not None:
                 trigger.unprime()
 
-            # Issue previous test result, if there is one
-            if self._test_result is not None:
-                if _debug:
-                    self.log.debug("Issue test result to regression object")
-                cocotb.regression_manager.handle_result(self._test_result)
-                self._test_result = None
-            if self._entrypoint is not None:
-                test = self._entrypoint
-                self._entrypoint = None
-                self.schedule(test)
-                self._check_termination()
+            # extract the current test, and clear it
+            test = self._test
+            self._test = None
+            if test is None:
+                raise InternalError("_test_completed called with no active test")
+            if test._outcome is None:
+                raise InternalError("_test_completed called with an incomplete test")
+
+            # Issue previous test result
+            if _debug:
+                self.log.debug("Issue test result to regression object")
+
+            # this may scheduler another test
+            cocotb.regression_manager.handle_result(test)
+
+            # if it did, make sure we handle the test completing
+            self._check_termination()
 
     def react(self, trigger):
         """
@@ -364,7 +367,7 @@ class Scheduler(object):
         if _profiling:
             ctx = profiling_context()
         else:
-            ctx = nullcontext()
+            ctx = _py_compat.nullcontext()
 
         with ctx:
             # When a trigger fires it is unprimed internally
@@ -480,18 +483,31 @@ class Scheduler(object):
                 trigger.unprime()
                 del self._trigger2coros[trigger]
 
-        if Join(coro) in self._trigger2coros:
+        assert self._test is not None
+
+        if coro is self._test:
+            if _debug:
+                self.log.debug("Unscheduling test {}".format(coro))
+
+            if not self._terminate:
+                self._terminate = True
+                self.cleanup()
+
+        elif Join(coro) in self._trigger2coros:
             self.react(Join(coro))
         else:
             try:
                 # throws an error if the background coroutine errored
                 # and no one was monitoring it
-                coro.retval
-            except TestComplete as test_result:
-                self.log.debug("TestComplete received: {}".format(test_result.__class__.__name__))
-                self.finish_test(test_result)
+                coro._outcome.get()
+            except TestComplete as e:
+                coro.log.info("Test stopped by this forked coroutine")
+                outcome = outcomes.Error(e).without_frames(['unschedule', 'get'])
+                self._test._force_outcome(outcome)
             except Exception as e:
-                self.finish_test(create_error(self, "Forked coroutine {} raised exception: {}".format(coro, e)))
+                coro.log.error("Exception raised by this forked coroutine")
+                outcome = outcomes.Error(e).without_frames(['unschedule', 'get'])
+                self._test._force_outcome(outcome)
 
     def save_write(self, handle, value):
         if self._mode == Scheduler._MODE_READONLY:
@@ -621,8 +637,12 @@ class Scheduler(object):
         self._check_termination()
         return coroutine
 
-    def new_test(self, coroutine):
-        self._entrypoint = coroutine
+    def add_test(self, test_coro):
+        """Called by the regression manager to queue the next test"""
+        if self._test is not None:
+            raise InternalError("Test was added while another was in progress")
+        self._test = test_coro
+        return self.add(test_coro)
 
     # This collection of functions parses a trigger out of the object
     # that was yielded by a coroutine, converting `list` -> `Waitable`,
@@ -694,24 +714,23 @@ class Scheduler(object):
         if _debug:
             self.log.debug("Scheduling with {}".format(send_outcome))
 
+        coro_completed = False
         try:
             result = coroutine._advance(send_outcome)
             if _debug:
                 self.log.debug("Coroutine %s yielded %s (mode %d)" %
                                (coroutine.__name__, str(result), self._mode))
 
-        # TestComplete indication is game over, tidy up
-        except TestComplete as test_result:
-            # Tag that close down is needed, save the test_result
-            # for later use in cleanup handler
-            self.log.debug("TestComplete received: %s" % test_result.__class__.__name__)
-            self.finish_test(test_result)
-            return
-
-        # Normal coroutine completion
         except cocotb.decorators.CoroutineComplete as exc:
             if _debug:
-                self.log.debug("Coroutine completed: %s" % str(coroutine))
+                self.log.debug("Coroutine {} completed with {}".format(
+                    coroutine, coroutine._outcome
+                ))
+            coro_completed = True
+
+        # this can't go in the else above, as that causes unwanted exception
+        # chaining
+        if coro_completed:
             self.unschedule(coroutine)
             return
 
@@ -749,20 +768,16 @@ class Scheduler(object):
         while self._pending_coros:
             self.add(self._pending_coros.pop(0))
 
-    def finish_test(self, test_result):
-        """Cache the test result and set the terminate flag."""
-        self.log.debug("finish_test called with %s" % (repr(test_result)))
-        if not self._terminate:
-            self._terminate = True
-            self._test_result = test_result
-            self.cleanup()
+    def finish_test(self, exc):
+        self._test.abort(exc)
 
-    def finish_scheduler(self, test_result):
+    def finish_scheduler(self, exc):
         """Directly call into the regression manager and end test
            once we return the sim will close us so no cleanup is needed.
         """
         self.log.debug("Issue sim closedown result to regression object")
-        cocotb.regression_manager.handle_result(test_result)
+        self._test.abort(exc)
+        cocotb.regression_manager.handle_result(self._test)
 
     def cleanup(self):
         """Clear up all our state.

@@ -47,7 +47,7 @@ VhpiSignalObjHdl::~VhpiSignalObjHdl()
 
 bool get_range(vhpiHandleT hdl, vhpiIntT dim, int *left, int *right) {
 #ifdef IUS
-    /* IUS does not appear to set the vhpiIsUnconstrainedP property.  IUS Docs say will return
+    /* IUS/Xcelium does not appear to set the vhpiIsUnconstrainedP property.  IUS Docs say will return
      * -1 if unconstrained, but with vhpiIntT being unsigned, the value returned is below.
      */
     const vhpiIntT UNCONSTRAINED = 2147483647;
@@ -108,7 +108,7 @@ bool get_range(vhpiHandleT hdl, vhpiIntT dim, int *left, int *right) {
                     if (curr_idx == dim) {
                         vhpi_release_handle(it);
 
-                        /* IUS only sets the vhpiIsUnconstrainedP incorrectly on the base type */
+                        /* IUS/Xcelium only sets the vhpiIsUnconstrainedP incorrectly on the base type */
                         if (!vhpi_get(vhpiIsUnconstrainedP, constraint)) {
                             error = false;
                             *left  = vhpi_get(vhpiLeftBoundP, constraint);
@@ -357,7 +357,7 @@ VhpiCbHdl::VhpiCbHdl(GpiImplInterface *impl) : GpiCbHdl(impl)
     vhpi_time.low = 0;
 }
 
-int VhpiCbHdl::cleanup_callback(void)
+int VhpiCbHdl::cleanup_callback()
 {
     /* For non timer callbacks we disable rather than remove */
     int ret = 0;
@@ -376,7 +376,7 @@ int VhpiCbHdl::cleanup_callback(void)
     return 0;
 }
 
-int VhpiCbHdl::arm_callback(void)
+int VhpiCbHdl::arm_callback()
 {
     int ret = 0;
     vhpiStateT cbState;
@@ -650,7 +650,7 @@ int VhpiSignalObjHdl::set_signal_value(std::string &value)
     return 0;
 }
 
-const char* VhpiSignalObjHdl::get_signal_value_binstr(void)
+const char* VhpiSignalObjHdl::get_signal_value_binstr()
 {
     switch (m_value.format) {
         case vhpiRealVal:
@@ -673,7 +673,7 @@ const char* VhpiSignalObjHdl::get_signal_value_binstr(void)
     }
 }
 
-const char* VhpiSignalObjHdl::get_signal_value_str(void)
+const char* VhpiSignalObjHdl::get_signal_value_str()
 {
     switch (m_value.format) {
         case vhpiStrVal: {
@@ -695,7 +695,7 @@ const char* VhpiSignalObjHdl::get_signal_value_str(void)
     return m_value.value.str;
 }
 
-double VhpiSignalObjHdl::get_signal_value_real(void)
+double VhpiSignalObjHdl::get_signal_value_real()
 {
     m_value.format = vhpiRealVal;
     m_value.numElems = 1;
@@ -708,7 +708,7 @@ double VhpiSignalObjHdl::get_signal_value_real(void)
     return m_value.value.real;
 }
 
-long VhpiSignalObjHdl::get_signal_value_long(void)
+long VhpiSignalObjHdl::get_signal_value_long()
 {
     vhpiValueT value;
     value.format = vhpiIntVal;
@@ -808,7 +808,7 @@ VhpiShutdownCbHdl::VhpiShutdownCbHdl(GpiImplInterface *impl) : GpiCbHdl(impl),
     cb_data.reason = vhpiCbEndOfSimulation;
 }
 
-int VhpiShutdownCbHdl::run_callback(void) {
+int VhpiShutdownCbHdl::run_callback() {
     set_call_state(GPI_DELETE);
     gpi_embed_end();
     return 0;
@@ -824,7 +824,7 @@ VhpiTimedCbHdl::VhpiTimedCbHdl(GpiImplInterface *impl, uint64_t time_ps) : GpiCb
     cb_data.time = &vhpi_time;
 }
 
-int VhpiTimedCbHdl::cleanup_callback(void)
+int VhpiTimedCbHdl::cleanup_callback()
 {
     if (m_state == GPI_FREE)
         return 1;
