@@ -96,7 +96,7 @@ class BinaryValue(object):
     _resolve_to_error = "xXzZuUwW"  # Resolve to a ValueError() since these usually mean something is wrong
     _permitted_chars  = _resolve_to_0 +_resolve_to_1 + _resolve_to_error + "01"  # noqa
 
-    def __init__(self, value=None, n_bits=None, bigEndian=True,
+    def __init__(self, value=None, n_bits=None, bigEndian=False,
                  binaryRepresentation=BinaryRepresentation.UNSIGNED,
                  bits=None):
         """Args:
