@@ -20,6 +20,9 @@ sys.path.insert(0, os.path.abspath('../..'))
 # Add in-tree extensions to path
 sys.path.insert(0, os.path.abspath('../sphinxext'))
 
+import cocotb
+from distutils.version import LooseVersion
+
 os.environ["SPHINX_BUILD"] = "1"
 
 # -- General configuration -----------------------------------------------------
@@ -30,20 +33,24 @@ os.environ["SPHINX_BUILD"] = "1"
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
 extensions = [
-    'sphinx.ext.autodoc', 
-    'sphinx.ext.doctest', 
-    'sphinx.ext.todo', 
-    'sphinx.ext.coverage', 
-    'sphinx.ext.imgmath', 
+    'sphinx.ext.autodoc',
+    'sphinx.ext.doctest',
+    'sphinx.ext.todo',
+    'sphinx.ext.coverage',
+    'sphinx.ext.imgmath',
     'sphinx.ext.viewcode',
     'sphinx.ext.napoleon',
     'sphinx.ext.intersphinx',
+    'sphinxcontrib.makedomain',
+    'sphinx.ext.autosectionlabel',
+    'sphinx.ext.inheritance_diagram',
     'cairosvgconverter',
     'breathe',
     'sphinx_issues',
+    'sphinxarg.ext',
     ]
 
-intersphinx_mapping = {'https://docs.python.org/3': None}
+intersphinx_mapping = {'python': ('https://docs.python.org/3', None)}
 
 # Github repo
 issues_github_path = "cocotb/cocotb"
@@ -68,10 +75,11 @@ copyright = u'2014-{0}, PotentialVentures'.format(datetime.datetime.now().year)
 # |version| and |release|, also used in various other places throughout the
 # built documents.
 #
-# The short X.Y version.
-version = '1.1'
 # The full version, including alpha/beta/rc tags.
-release = '1.1'
+release = cocotb.__version__
+# The short X.Y version.
+v_major, v_minor = LooseVersion(release).version[:2]
+version = '{}.{}'.format(v_major, v_minor)
 
 autoclass_content = "both"
 
@@ -325,3 +333,16 @@ spelling_word_list_filename = ["spelling_wordlist.txt", "c_symbols.txt"]
 spelling_ignore_pypi_package_names = False
 spelling_ignore_wiki_words = False
 spelling_show_suggestions = True
+
+# -- Extra setup for inheritance_diagram directive which uses graphviz ---------
+
+graphviz_output_format = 'svg'
+
+# -- Extra setup for towncrier -------------------------------------------------
+# see also https://towncrier.readthedocs.io/en/actual-freaking-docs/
+
+in_progress_notes = subprocess.check_output(['towncrier', '--draft'],
+                                            cwd='../..',
+                                            universal_newlines=True)
+with open('generated/master-notes.rst', 'w') as f:
+    f.write(in_progress_notes)

@@ -9,6 +9,7 @@ Contents:
    introduction
    quickstart
    building
+   writing_testbenches
    coroutines
    triggers
    testbench_tools
@@ -20,6 +21,7 @@ Contents:
    examples
    troubleshooting
    simulator_support
+   extensions
    roadmap
    release_notes
 

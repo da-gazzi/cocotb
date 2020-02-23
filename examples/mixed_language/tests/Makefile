@@ -1,8 +1,15 @@
+ifeq ($(SIM),)
+all:
+	@echo "Skipping example mixed_language since Icarus doesn't support this"
+clean::
+else ifeq ($(shell echo $(SIM) | tr A-Z a-z),icarus)
+all:
+	@echo "Skipping example mixed_language since Icarus doesn't support this"
+clean::
+else
+
 # Override this variable to use a VHDL toplevel instead of SystemVerilog
 TOPLEVEL_LANG ?= verilog
-
-# Choose a simulator that supports mixed language VHPI/VPI
-SIM?=aldec
 
 TOPLEVEL = endian_swapper_mixed
 
@@ -35,3 +42,5 @@ endif
 
 include $(shell cocotb-config --makefiles)/Makefile.inc
 include $(shell cocotb-config --makefiles)/Makefile.sim
+
+endif

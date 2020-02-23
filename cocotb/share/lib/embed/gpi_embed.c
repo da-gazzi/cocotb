@@ -30,9 +30,9 @@
 // Embed Python into the simulator using GPI
 
 #include <Python.h>
+#include <unistd.h>
 #include <cocotb_utils.h>
 #include "embed.h"
-#include "../compat/python3_compat.h"
 #include "locale.h"
 
 #if defined(_WIN32)
@@ -44,13 +44,8 @@
 #endif
 static PyThreadState *gtstate = NULL;
 
-#if PY_MAJOR_VERSION >= 3
 static wchar_t progname[] = L"cocotb";
 static wchar_t *argv[] = { progname };
-#else
-static char progname[] = "cocotb";
-static char *argv[] = { progname };
-#endif
 
 #if defined(_WIN32)
 #if defined(__MINGW32__) || defined (__CYGWIN32__)
@@ -69,9 +64,7 @@ static PyObject *pEventFn = NULL;
 static void set_program_name_in_venv(void)
 {
     static char venv_path[PATH_MAX];
-#if PY_MAJOR_VERSION >= 3
     static wchar_t venv_path_w[PATH_MAX];
-#endif
 
     const char *venv_path_home = getenv("VIRTUAL_ENV");
     if (!venv_path_home) {
@@ -79,7 +72,7 @@ static void set_program_name_in_venv(void)
         return;
     }
 
-    strncpy(venv_path, venv_path_home, sizeof(venv_path));
+    strncpy(venv_path, venv_path_home, sizeof(venv_path)-1);
     if (venv_path[sizeof(venv_path) - 1]) {
         LOG_ERROR("Unable to set Python Program Name using virtual environment. Path to virtual environment too long");
         return;
@@ -91,7 +84,6 @@ static void set_program_name_in_venv(void)
         return;
     }
 
-#if PY_MAJOR_VERSION >= 3
     wcsncpy(venv_path_w, Py_DecodeLocale(venv_path, NULL), sizeof(venv_path_w)/sizeof(wchar_t));
 
     if (venv_path_w[(sizeof(venv_path_w)/sizeof(wchar_t)) - 1]) {
@@ -101,10 +93,6 @@ static void set_program_name_in_venv(void)
 
     LOG_INFO("Using Python virtual environment interpreter at %ls", venv_path_w);
     Py_SetProgramName(venv_path_w);
-#else
-    LOG_INFO("Using Python virtual environment interpreter at %s", venv_path);
-    Py_SetProgramName(venv_path);
-#endif
 }
 
 
@@ -153,8 +141,10 @@ void embed_init_python(void)
        such that they can attach */
     const char *pause = getenv("COCOTB_ATTACH");
     if (pause) {
-        long sleep_time = strtol(pause, NULL, 10);
-        if (errno == ERANGE && (sleep_time == LONG_MAX || sleep_time == LONG_MIN)) {
+        unsigned long sleep_time = strtoul(pause, NULL, 10);
+        /* This should check for out-of-range parses which returns ULONG_MAX and sets errno,
+           as well as correct parses that would be sliced by the narrowing cast */
+        if (errno == ERANGE || sleep_time >= UINT_MAX) {
             LOG_ERROR("COCOTB_ATTACH only needs to be set to ~30 seconds");
             goto out;
         }
@@ -165,10 +155,40 @@ void embed_init_python(void)
         }
 
         LOG_ERROR("Waiting for %lu seconds - attach to PID %d with your debugger\n", sleep_time, getpid());
-        sleep(sleep_time);
+        sleep((unsigned int)sleep_time);
     }
 out:
     FEXIT;
+}
+
+/**
+ * @name    Simulator cleanup
+ * @brief   Called by the simulator on shutdown.
+ * @ingroup python_c_api
+ *
+ * GILState before calling: Not held
+ *
+ * GILState after calling: Not held
+ *
+ * Makes one call to PyGILState_Ensure and one call to Py_Finalize.
+ *
+ * Cleans up reference counts for Python objects and calls Py_Finalize function.
+ */
+void embed_sim_cleanup(void)
+{
+    // If initialization fails, this may be called twice:
+    // Before the initial callback returns and in the final callback.
+    // So we check if Python is still initialized before doing cleanup.
+    if (Py_IsInitialized()) {
+        to_python();
+        PyGILState_Ensure();    // Don't save state as we are calling Py_Finalize
+        Py_DecRef(pEventFn);
+        pEventFn = NULL;
+        clear_log_handler();
+        clear_log_filter();
+        Py_Finalize();
+        to_simulator();
+    }
 }
 
 /**
@@ -184,8 +204,6 @@ out:
  *
  * Loads the Python module called cocotb and calls the _initialise_testbench function
  */
-
-#define COCOTB_MODULE "cocotb"
 
 int get_module_ref(const char *modname, PyObject **mod)
 {
@@ -228,139 +246,175 @@ int embed_sim_init(gpi_sim_info_t *info)
         }
     }
 
-    PyObject *cocotb_module, *cocotb_init, *cocotb_args, *cocotb_retval;
-    PyObject *simlog_obj, *simlog_func;
-    PyObject *argv_list, *argc, *arg_dict, *arg_value;
+    PyObject *cocotb_module, *cocotb_init, *cocotb_retval;
+    PyObject *cocotb_log_module = NULL;
+    PyObject *simlog_func;
+    PyObject *argv_list;
 
     cocotb_module = NULL;
-    arg_dict = NULL;
 
     // Ensure that the current thread is ready to call the Python C API
     PyGILState_STATE gstate = PyGILState_Ensure();
     to_python();
 
-    if (get_module_ref(COCOTB_MODULE, &cocotb_module))
+    if (get_module_ref("cocotb", &cocotb_module))
         goto cleanup;
 
-    // Obtain the loggpi logger object
-    simlog_obj = PyObject_GetAttrString(cocotb_module, "loggpi");
-
-    if (simlog_obj == NULL) {
-        PyErr_Print();
-        LOG_ERROR("Failed to get simlog object from loggpi\n");
+    if (get_module_ref("cocotb.log", &cocotb_log_module)) {
+        goto cleanup;
     }
 
-    simlog_func = PyObject_GetAttrString(simlog_obj, "_logFromC");
+    // Obtain the function to use when logging from C code
+    simlog_func = PyObject_GetAttrString(cocotb_log_module, "_log_from_c");      // New reference
     if (simlog_func == NULL) {
         PyErr_Print();
-        LOG_ERROR("Failed to get the _logFromC method");
+        LOG_ERROR("Failed to get the _log_from_c function");
         goto cleanup;
     }
-
     if (!PyCallable_Check(simlog_func)) {
-        PyErr_Print();
-        LOG_ERROR("_logFromC is not callable");
+        LOG_ERROR("_log_from_c is not callable");
+        Py_DECREF(simlog_func);
         goto cleanup;
     }
 
-    set_log_handler(simlog_func);
+    set_log_handler(simlog_func);                                       // Note: This function steals a reference to simlog_func.
 
-    Py_DECREF(simlog_func);
-
-    simlog_func = PyObject_GetAttrString(simlog_obj, "isEnabledFor");
+    // Obtain the function to check whether to call log function
+    simlog_func = PyObject_GetAttrString(cocotb_log_module, "_filter_from_c");   // New reference
     if (simlog_func == NULL) {
         PyErr_Print();
-        LOG_ERROR("Failed to get the isEnabledFor method");
+        LOG_ERROR("Failed to get the _filter_from_c method");
         goto cleanup;
     }
-
     if (!PyCallable_Check(simlog_func)) {
-        PyErr_Print();
-        LOG_ERROR("isEnabledFor is not callable");
+        LOG_ERROR("_filter_from_c is not callable");
+        Py_DECREF(simlog_func);
         goto cleanup;
     }
 
-    set_log_filter(simlog_func);
+    set_log_filter(simlog_func);                                        // Note: This function steals a reference to simlog_func.
 
-    argv_list = PyList_New(0);
+    // Build argv for cocotb module
+    argv_list = PyList_New(info->argc);                                 // New reference
+    if (argv_list == NULL) {
+        PyErr_Print();
+        LOG_ERROR("Unable to create argv list");
+        goto cleanup;
+    }
     for (i = 0; i < info->argc; i++) {
-        arg_value = PyString_FromString(info->argv[i]);
-        PyList_Append(argv_list, arg_value);
+        // Decode, embedding non-decodable bytes using PEP-383. This can only
+        // fail with MemoryError or similar.
+        PyObject *argv_item = PyUnicode_DecodeLocale(info->argv[i], "surrogateescape");  // New reference
+        if (argv_item == NULL) {
+            PyErr_Print();
+            LOG_ERROR("Unable to convert command line argument %d to Unicode string.", i);
+            Py_DECREF(argv_list);
+            goto cleanup;
+        }
+        PyList_SET_ITEM(argv_list, i, argv_item);                       // Note: This function steals the reference to argv_item
     }
 
-    arg_dict = PyModule_GetDict(cocotb_module);
-    PyDict_SetItemString(arg_dict, "argv", argv_list);
-
-    argc = PyInt_FromLong(info->argc);
-    PyDict_SetItemString(arg_dict, "argc", argc);
-
-    if (!PyCallable_Check(simlog_func)) {
+    // Add argv list to cocotb module
+    if (-1 == PyModule_AddObject(cocotb_module, "argv", argv_list)) {   // Note: This function steals the reference to argv_list if successful
         PyErr_Print();
-        LOG_ERROR("_printRecord is not callable");
+        LOG_ERROR("Unable to set argv");
+        Py_DECREF(argv_list);
+        goto cleanup;
+    }
+
+    // Add argc to cocotb module
+    if (-1 == PyModule_AddIntConstant(cocotb_module, "argc", info->argc)) {
+        PyErr_Print();
+        LOG_ERROR("Unable to set argc");
         goto cleanup;
     }
 
     LOG_INFO("Running on %s version %s", info->product, info->version);
     LOG_INFO("Python interpreter initialized and cocotb loaded!");
 
-    // Now that logging has been set up ok we initialize the testbench
-    if (-1 == PyObject_SetAttrString(cocotb_module, "SIM_NAME", PyString_FromString(info->product))) {
+    // Now that logging has been set up ok, we initialize the testbench
+    if (-1 == PyModule_AddStringConstant(cocotb_module, "SIM_NAME", info->product)) {
         PyErr_Print();
         LOG_ERROR("Unable to set SIM_NAME");
         goto cleanup;
     }
 
-    if (-1 == PyObject_SetAttrString(cocotb_module, "SIM_VERSION", PyString_FromString(info->version))) {
-            PyErr_Print();
-            LOG_ERROR("Unable to set SIM_VERSION");
-            goto cleanup;
+    if (-1 == PyModule_AddStringConstant(cocotb_module, "SIM_VERSION", info->version)) {
+        PyErr_Print();
+        LOG_ERROR("Unable to set SIM_VERSION");
+        goto cleanup;
     }
 
     // Set language in use as an attribute to cocotb module, or None if not provided
     const char *lang = getenv("TOPLEVEL_LANG");
-    PyObject* PyLang;
-    if (lang)
-        PyLang = PyString_FromString(lang);
-    else
+    PyObject *PyLang;
+    if (lang) {
+        PyLang = PyUnicode_FromString(lang);                            // New reference
+    } else {
+        Py_INCREF(Py_None);
         PyLang = Py_None;
-
-    if (-1 == PyObject_SetAttrString(cocotb_module, "LANGUAGE", PyLang)) {
-        LOG_ERROR("Unable to set LANGUAGE");
-        goto cleanup;
     }
-
-    // Hold onto a reference to our _fail_test function
-    pEventFn = PyObject_GetAttrString(cocotb_module, "_sim_event");
-
-    if (!PyCallable_Check(pEventFn)) {
+    if (PyLang == NULL) {
         PyErr_Print();
+        LOG_ERROR("Unable to create Python object for cocotb.LANGUAGE");
+        goto cleanup;
+    }
+    if (-1 == PyObject_SetAttrString(cocotb_module, "LANGUAGE", PyLang)) {
+        PyErr_Print();
+        LOG_ERROR("Unable to set LANGUAGE");
+        Py_DECREF(PyLang);
+        goto cleanup;
+    }
+    Py_DECREF(PyLang);
+
+    pEventFn = PyObject_GetAttrString(cocotb_module, "_sim_event");     // New reference
+    if (pEventFn == NULL) {
+        PyErr_Print();
+        LOG_ERROR("Failed to get the _sim_event method");
+        goto cleanup;
+    }
+    if (!PyCallable_Check(pEventFn)) {
         LOG_ERROR("cocotb._sim_event is not callable");
-        goto cleanup;
-    }
-    Py_INCREF(pEventFn);
-
-    cocotb_init = PyObject_GetAttrString(cocotb_module, "_initialise_testbench");         // New reference
-
-    if (cocotb_init == NULL || !PyCallable_Check(cocotb_init)) {
-        if (PyErr_Occurred())
-            PyErr_Print();
-        LOG_ERROR("Cannot find function \"%s\"\n", "_initialise_testbench");
+        Py_DECREF(pEventFn);
+        pEventFn = NULL;
         goto cleanup;
     }
 
-    cocotb_args = PyTuple_New(1);
-    if (dut == NULL)
-        PyTuple_SetItem(cocotb_args, 0, Py_BuildValue(""));        // Note: This function “steals” a reference to o.
-    else
-        PyTuple_SetItem(cocotb_args, 0, PyString_FromString(dut));        // Note: This function “steals” a reference to o.
-    cocotb_retval = PyObject_CallObject(cocotb_init, cocotb_args);
+    cocotb_init = PyObject_GetAttrString(cocotb_module, "_initialise_testbench");   // New reference
+    if (cocotb_init == NULL) {
+        PyErr_Print();
+        LOG_ERROR("Failed to get the _initialise_testbench method");
+        goto cleanup;
+    }
+    if (!PyCallable_Check(cocotb_init)) {
+        LOG_ERROR("cocotb._initialise_testbench is not callable");
+        Py_DECREF(cocotb_init);
+        goto cleanup;
+    }
+
+    PyObject *dut_arg;
+    if (dut == NULL) {
+        Py_INCREF(Py_None);
+        dut_arg = Py_None;
+    } else {
+        dut_arg = PyUnicode_FromString(dut);                            // New reference
+    }
+    if (dut_arg == NULL) {
+        PyErr_Print();
+        LOG_ERROR("Unable to create Python object for dut argument of _initialise_testbench");
+        goto cleanup;
+    }
+
+    cocotb_retval = PyObject_CallFunctionObjArgs(cocotb_init, dut_arg, NULL);
+    Py_DECREF(dut_arg);
+    Py_DECREF(cocotb_init);
 
     if (cocotb_retval != NULL) {
         LOG_DEBUG("_initialise_testbench successful");
         Py_DECREF(cocotb_retval);
     } else {
         PyErr_Print();
-        LOG_ERROR("cocotb initialization failed - exiting\n");
+        LOG_ERROR("cocotb initialization failed - exiting");
         goto cleanup;
     }
 
@@ -370,12 +424,9 @@ int embed_sim_init(gpi_sim_info_t *info)
 cleanup:
     ret = -1;
 ok:
-    if (cocotb_module) {
-        Py_DECREF(cocotb_module);
-    }
-    if (arg_dict) {
-        Py_DECREF(arg_dict);
-    }
+    Py_XDECREF(cocotb_module);
+    Py_XDECREF(cocotb_log_module);
+
     PyGILState_Release(gstate);
     to_simulator();
 
@@ -392,20 +443,16 @@ void embed_sim_event(gpi_event_t level, const char *msg)
         to_python();
         gstate = PyGILState_Ensure();
 
-        PyObject *fArgs = PyTuple_New(2);
-        PyTuple_SetItem(fArgs, 0, PyInt_FromLong(level));
+        if (msg == NULL) {
+            msg = "No message provided";
+        }
 
-        if (msg != NULL)
-            PyTuple_SetItem(fArgs, 1, PyString_FromString(msg));
-        else
-            PyTuple_SetItem(fArgs, 1, PyString_FromString("No message provided"));
-        PyObject *pValue = PyObject_CallObject(pEventFn, fArgs);
-        if (!pValue) {
+        PyObject* pValue = PyObject_CallFunction(pEventFn, "ls", level, msg);
+        if (pValue == NULL) {
             PyErr_Print();
             LOG_ERROR("Passing event to upper layer failed");
         }
-
-        Py_DECREF(fArgs);
+        Py_XDECREF(pValue);
         PyGILState_Release(gstate);
         to_simulator();
     }

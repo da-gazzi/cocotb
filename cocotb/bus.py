@@ -3,7 +3,7 @@
 # Copyright (c) 2013 Potential Ventures Ltd
 # Copyright (c) 2013 SolarFlare Communications Inc
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #     * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@
 #       SolarFlare Communications Inc nor the
 #       names of its contributors may be used to endorse or promote products
 #       derived from this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -30,16 +30,13 @@
 """Common bus related functionality.
 A bus is simply defined as a collection of signals.
 """
-from cocotb.handle import AssignmentResult
+from cocotb.handle import _AssignmentResult
 
 def _build_sig_attr_dict(signals):
     if isinstance(signals, dict):
         return signals
     else:
-        sig_to_attr = {}
-        for sig in signals:
-            sig_to_attr[sig] = sig
-        return sig_to_attr
+        return {sig: sig for sig in signals}
 
 
 class Bus(object):
@@ -48,7 +45,7 @@ class Bus(object):
     Assumes we have a set of signals/nets named ``entity.<bus_name><separator><signal>``.
 
     For example a bus ``stream_in`` with signals ``valid`` and ``data`` is assumed
-    to be named ``dut.stream_in_valid`` and ``dut.stream_in_data`` (with 
+    to be named ``dut.stream_in_valid`` and ``dut.stream_in_data`` (with
     the default separator '_').
 
     TODO:
@@ -58,17 +55,17 @@ class Bus(object):
         """
         Args:
             entity (SimHandle): :any:`SimHandle` instance to the entity containing the bus.
-            name (str): Name of the bus. ``None`` for nameless bus, e.g. bus-signals
+            name (str): Name of the bus. ``None`` for a nameless bus, e.g. bus-signals
                 in an interface or a ``modport`` (untested on ``struct``/``record``,
                 but could work here as well).
-            signals (list/dict): In the case of an obj (passed to drive/capture) that
-                has the same attribute names as the signal names of the bus,
-                the signals argument can be a list of those names.
-                When obj has different attribute names, the signals arg should be
-                a dict that maps bus attribute names to obj signal names.
-            optional_signals (list/dict, optional): Signals that don't have to be present
-                on the interface. 
-                See ``signals`` argument above for details.
+            signals (list or dict): In the case of an object (passed to :func:`drive`/:func:`capture`)
+                that has the same attribute names as the signal names of the bus,
+                the *signals* argument can be a list of those names.
+                When the object has different attribute names, the *signals* argument should be
+                a dict that maps bus attribute names to object signal names.
+            optional_signals (list or dict, optional): Signals that don't have to be present
+                on the interface.
+                See the *signals* argument above for details.
             bus_separator (str, optional): Character(s) to use as separator between bus
                 name and signal name. Defaults to '_'.
             array_idx (int or None, optional): Optional index when signal is an array.
@@ -139,7 +136,7 @@ class Bus(object):
         """Capture the values from the bus, returning an object representing the capture.
 
         Returns:
-            dict: A dictionary that supports access by attribute, 
+            dict: A dictionary that supports access by attribute,
             where each attribute corresponds to each signal's value.
         Raises:
             RuntimeError: If signal not present in bus,
@@ -197,4 +194,4 @@ class Bus(object):
     def __le__(self, value):
         """Overload the less than or equal to operator for value assignment"""
         self.drive(value)
-        return AssignmentResult(self, value)
+        return _AssignmentResult(self, value)

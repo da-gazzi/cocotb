@@ -1,6 +1,6 @@
 # Copyright (c) 2015 Potential Ventures Ltd
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #     * Redistributions of source code must retain the above copyright
@@ -12,7 +12,7 @@
 #       SolarFlare Communications Inc nor the
 #       names of its contributors may be used to endorse or promote products
 #       derived from this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -33,7 +33,6 @@ NOTE: Currently we only support a very small subset of functionality.
 import cocotb
 from cocotb.triggers import RisingEdge, ReadOnly, Event
 from cocotb.drivers import BusDriver
-from cocotb.result import ReturnValue
 
 
 class OPBException(Exception):
@@ -47,8 +46,8 @@ class OPBMaster(BusDriver):
     _optional_signals = ["seqAddr"]
     _max_cycles = 16
 
-    def __init__(self, entity, name, clock):
-        BusDriver.__init__(self, entity, name, clock)
+    def __init__(self, entity, name, clock, **kwargs):
+        BusDriver.__init__(self, entity, name, clock, **kwargs)
         self.bus.select.setimmediatevalue(0)
         self.log.debug("OPBMaster created")
         self.busy_event = Event("%s_busy" % name)
@@ -70,15 +69,15 @@ class OPBMaster(BusDriver):
         """Issue a request to the bus and block until this comes back.
 
         Simulation time still progresses but syntactically it blocks.
-        
+
         Args:
             address (int): The address to read from.
             sync (bool, optional): Wait for rising edge on clock initially.
                 Defaults to True.
-            
+
         Returns:
             BinaryValue: The read data value.
-            
+
         Raises:
             OPBException: If read took longer than 16 cycles.
         """
@@ -108,18 +107,18 @@ class OPBMaster(BusDriver):
         self.bus.select <= 0
         self._release_lock()
         self.log.info("Read of address 0x%x returned 0x%08x" % (address, data))
-        raise ReturnValue(data)
+        return data
 
     @cocotb.coroutine
     def write(self, address, value, sync=True):
         """Issue a write to the given address with the specified value.
-        
+
         Args:
             address (int): The address to read from.
             value (int): The data value to write.
             sync (bool, optional): Wait for rising edge on clock initially.
                 Defaults to True.
-            
+
         Raises:
             OPBException: If write took longer than 16 cycles.
         """

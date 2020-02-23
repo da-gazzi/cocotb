@@ -29,7 +29,6 @@
 import cocotb
 from cocotb.triggers import RisingEdge, ReadOnly, Lock
 from cocotb.drivers import BusDriver
-from cocotb.result import ReturnValue
 from cocotb.binary import BinaryValue
 
 import array
@@ -44,15 +43,15 @@ class AXI4LiteMaster(BusDriver):
 
     TODO: Kill all pending transactions if reset is asserted.
     """
-    
+
     _signals = ["AWVALID", "AWADDR", "AWREADY",        # Write address channel
                 "WVALID", "WREADY", "WDATA", "WSTRB",  # Write data channel
                 "BVALID", "BREADY", "BRESP",           # Write response channel
                 "ARVALID", "ARADDR", "ARREADY",        # Read address channel
                 "RVALID", "RREADY", "RRESP", "RDATA"]  # Read data channel
 
-    def __init__(self, entity, name, clock):
-        BusDriver.__init__(self, entity, name, clock)
+    def __init__(self, entity, name, clock, **kwargs):
+        BusDriver.__init__(self, entity, name, clock, **kwargs)
 
         # Drive some sensible defaults (setimmediatevalue to avoid x asserts)
         self.bus.AWVALID.setimmediatevalue(0)
@@ -123,10 +122,10 @@ class AXI4LiteMaster(BusDriver):
                 Default is no delay.
             sync (bool, optional): Wait for rising edge on clock initially.
                 Defaults to True.
-            
+
         Returns:
             BinaryValue: The write response value.
-            
+
         Raises:
             AXIProtocolError: If write response from AXI is not ``OKAY``.
         """
@@ -158,20 +157,20 @@ class AXI4LiteMaster(BusDriver):
             raise AXIProtocolError("Write to address 0x%08x failed with BRESP: %d"
                                % (address, int(result)))
 
-        raise ReturnValue(result)
+        return result
 
     @cocotb.coroutine
     def read(self, address, sync=True):
         """Read from an address.
-        
+
         Args:
             address (int): The address to read from.
             sync (bool, optional): Wait for rising edge on clock initially.
                 Defaults to True.
-            
+
         Returns:
             BinaryValue: The read data value.
-            
+
         Raises:
             AXIProtocolError: If read response from AXI is not ``OKAY``.
         """
@@ -202,7 +201,7 @@ class AXI4LiteMaster(BusDriver):
             raise AXIProtocolError("Read address 0x%08x failed with RRESP: %d" %
                                (address, int(result)))
 
-        raise ReturnValue(data)
+        return data
 
     def __len__(self):
         return 2**len(self.bus.ARADDR)
@@ -237,9 +236,9 @@ class AXI4Slave(BusDriver):
     ]
 
     def __init__(self, entity, name, clock, memory, callback=None, event=None,
-                 big_endian=False):
+                 big_endian=False, **kwargs):
 
-        BusDriver.__init__(self, entity, name, clock)
+        BusDriver.__init__(self, entity, name, clock, **kwargs)
         self.clock = clock
 
         self.big_endian = big_endian

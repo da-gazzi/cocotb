@@ -1,7 +1,7 @@
 # Copyright (c) 2013 Potential Ventures Ltd
 # Copyright (c) 2013 SolarFlare Communications Inc
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #     * Redistributions of source code must retain the above copyright
@@ -13,7 +13,7 @@
 #       SolarFlare Communications Inc nor the
 #       names of its contributors may be used to endorse or promote products
 #       derived from this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -80,7 +80,7 @@ def ipython_embed_kernel(dut):
     ###############################################################################""".format(os.getpid())))
     IPython.embed_kernel()
 
-    
+
 @cocotb.test(expect_error=True)
 def discover_value_not_in_dut(dut):
     """Try and get a value from the DUT that is not there"""
@@ -273,8 +273,8 @@ def access_string_vhdl(dut):
 
 # TODO: add tests for Verilog "string_input_port" and "STRING_LOCALPARAM" (see issue #802)
 
-@cocotb.test(skip=cocotb.LANGUAGE in ["vhdl"],
-             expect_error=cocotb.SIM_NAME.lower().startswith("icarus"))
+@cocotb.test(skip=cocotb.LANGUAGE in ["vhdl"] or cocotb.SIM_NAME.lower().startswith("icarus"),
+             expect_fail=cocotb.SIM_NAME.lower().startswith("modelsim"))
 def access_const_string_verilog(dut):
     """Access to a const Verilog string."""
     tlog = logging.getLogger("cocotb.test")
@@ -286,7 +286,7 @@ def access_const_string_verilog(dut):
         raise TestFailure("STRING_CONST was not StringObject")
     if string_const != "TESTING_CONST":
         raise TestFailure("STRING_CONST was not == \'TESTING_CONST\'")
-    
+
     tlog.info("Modifying const string")
     string_const <= "MODIFIED"
     yield Timer(10)
@@ -294,7 +294,7 @@ def access_const_string_verilog(dut):
     if string_const != "TESTING_CONST":
         raise TestFailure("STRING_CONST was not still \'TESTING_CONST\'")
 
-    
+
 @cocotb.test(skip=cocotb.LANGUAGE in ["vhdl"],
              expect_error=cocotb.SIM_NAME.lower().startswith("icarus"))
 def access_var_string_verilog(dut):
@@ -308,7 +308,7 @@ def access_var_string_verilog(dut):
         raise TestFailure("STRING_VAR was not StringObject")
     if string_var != "TESTING_VAR":
         raise TestFailure("STRING_VAR was not == \'TESTING_VAR\'")
-    
+
     tlog.info("Modifying var string")
     string_var <= "MODIFIED"
     yield Timer(10)
@@ -370,7 +370,7 @@ def access_boolean(dut):
     if (int(curr_val) == int(output_bool)):
         raise TestFailure("Value did not propogate")
 
-@cocotb.test()
+@cocotb.test(skip=cocotb.LANGUAGE in ["vhdl"])
 def access_internal_register_array(dut):
     """Test access to an internal register array"""
 
@@ -378,7 +378,7 @@ def access_internal_register_array(dut):
         raise TestFailure("Failed to access internal register array value")
 
     dut.register_array[1].setimmediatevalue(4)
-    
+
     yield Timer(1)
 
     if (dut.register_array[1].value != 4):
@@ -443,3 +443,33 @@ def custom_type(dut):
     if expected_top != count:
         raise TestFailure("Expected %d found %d for cosLut" % (expected_top, count))
 
+@cocotb.test(skip=cocotb.LANGUAGE in ["vhdl"])
+def type_check_verilog(dut):
+    """
+    Test if types are recognized
+    """
+
+    tlog = logging.getLogger("cocotb.test")
+
+    yield Timer(1)
+
+    test_handles = [
+        (dut.stream_in_ready, "GPI_REGISTER"),
+        (dut.register_array, "GPI_ARRAY"),
+        (dut.NUM_OF_MODULES, "GPI_PARAMETER"),
+        (dut.temp, "GPI_REGISTER"),
+        (dut.and_output, "GPI_NET"),
+        (dut.stream_in_data, "GPI_NET"),
+        (dut.logic_b, "GPI_REGISTER"),
+        (dut.logic_c, "GPI_REGISTER"),
+    ]
+
+    if cocotb.SIM_NAME.lower().startswith(("icarus")):
+        test_handles.append((dut.logic_a, "GPI_NET")) # https://github.com/steveicarus/iverilog/issues/312
+    else:
+        test_handles.append((dut.logic_a, "GPI_REGISTER"))
+
+    for handle in test_handles:
+        tlog.info("Handle %s" %  (handle[0]._fullname,))
+        if handle[0]._type != handle[1]:
+            raise TestFailure("Expected %s found %s for %s" % (handle[1], handle[0]._type, handle[0]._fullname))

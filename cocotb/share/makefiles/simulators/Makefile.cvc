@@ -37,16 +37,16 @@ else
 CMD_BIN := cvc64
 
 ifdef CVC_BIN_DIR
-    CMD := $(shell which $(CVC_BIN_DIR)/$(CMD_BIN) 2>/dev/null)
+    CMD := $(shell :; command -v $(CVC_BIN_DIR)/$(CMD_BIN) 2>/dev/null)
 else
     # auto-detect bin dir from system path
-    CMD := $(shell which $(CMD_BIN) 2>/dev/null)
+    CMD := $(shell :; command -v $(CMD_BIN) 2>/dev/null)
 endif
 
 ifeq (, $(CMD))
     $(error "Unable to locate command >$(CMD_BIN)<")
 else
-	CVC_BIN_DIR := $(shell dirname $(CMD))
+    CVC_BIN_DIR := $(shell dirname $(CMD))
     export CVC_BIN_DIR
 endif
 

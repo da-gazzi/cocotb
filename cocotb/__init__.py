@@ -36,10 +36,11 @@ import logging
 import threading
 import random
 import time
+import warnings
 
 import cocotb.handle
+import cocotb.log
 from cocotb.scheduler import Scheduler
-from cocotb.log import SimBaseLog, SimLog
 from cocotb.regression import RegressionManager
 
 
@@ -51,43 +52,59 @@ from cocotb.decorators import test, coroutine, hook, function, external  # noqa:
 # so that cocotb.scheduler gives you the singleton instance and not the
 # scheduler package
 
+from ._version import __version__
+
 # GPI logging instance
 if "COCOTB_SIM" in os.environ:
-    import simulator
-    logging.basicConfig()
-    logging.setLoggerClass(SimBaseLog)
-    log = SimLog('cocotb')
-    level = os.getenv("COCOTB_LOG_LEVEL", "INFO")
-    try:
-        _default_log = getattr(logging, level)
-    except AttributeError as e:
-        log.error("Unable to set loging level to %s" % level)
-        _default_log = logging.INFO
-    log.setLevel(_default_log)
-    loggpi = SimLog('cocotb.gpi')
-    # Notify GPI of log level
-    simulator.log_level(_default_log)
+
+    def _reopen_stream_with_buffering(stream_name):
+        try:
+            if not getattr(sys, stream_name).isatty():
+                setattr(sys, stream_name, os.fdopen(getattr(sys, stream_name).fileno(), 'w', 1))
+                return True
+            return False
+        except Exception as e:
+            return e
 
     # If stdout/stderr are not TTYs, Python may not have opened them with line
     # buffering. In that case, try to reopen them with line buffering
     # explicitly enabled. This ensures that prints such as stack traces always
     # appear. Continue silently if this fails.
-    try:
-        if not sys.stdout.isatty():
-            sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
-            log.debug("Reopened stdout with line buffering")
-        if not sys.stderr.isatty():
-            sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
-            log.debug("Reopened stderr with line buffering")
-    except Exception as e:
-        log.warning("Failed to ensure that stdout/stderr are line buffered: %s", e)
+    _stdout_buffer_result = _reopen_stream_with_buffering('stdout')
+    _stderr_buffer_result = _reopen_stream_with_buffering('stderr')
+
+    # Don't set the logging up until we've attempted to fix the standard IO,
+    # otherwise it will end up connected to the unfixed IO.
+    cocotb.log.default_config()
+    log = logging.getLogger(__name__)
+
+    # we can't log these things until the logging is set up!
+    if _stderr_buffer_result is True:
+        log.debug("Reopened stderr with line buffering")
+    if _stdout_buffer_result is True:
+        log.debug("Reopened stdout with line buffering")
+    if isinstance(_stdout_buffer_result, Exception) or isinstance(_stderr_buffer_result, Exception):
+        if isinstance(_stdout_buffer_result, Exception):
+            log.warning("Failed to ensure that stdout is line buffered", exc_info=_stdout_buffer_result)
+        if isinstance(_stderr_buffer_result, Exception):
+            log.warning("Failed to ensure that stderr is line buffered", exc_info=_stderr_buffer_result)
         log.warning("Some stack traces may not appear because of this.")
 
+    del _stderr_buffer_result, _stdout_buffer_result
+
+    # From https://www.python.org/dev/peps/pep-0565/#recommended-filter-settings-for-test-runners
+    # If the user doesn't want to see these, they can always change the global
+    # warning settings in their test module.
+    if not sys.warnoptions:
+        warnings.simplefilter("default")
 
 scheduler = Scheduler()
+"""The global scheduler instance."""
+
 regression_manager = None
 
 plusargs = {}
+"""A dictionary of "plusargs" handed to the simulation."""
 
 # To save typing provide an alias to scheduler.add
 fork = scheduler.add
@@ -102,16 +119,16 @@ def mem_debug(port):
 
 
 def _initialise_testbench(root_name):
-    """
+    """Initialize testbench.
+
     This function is called after the simulator has elaborated all
     entities and is ready to run the test.
 
     The test must be defined by the environment variables
-        MODULE
-        TESTCASE
+    :envvar:`MODULE` and :envvar:`TESTCASE`.
 
-    The environment variable COCOTB_HOOKS contains a comma-separated list of
-        modules that should be executed before the first test.
+    The environment variable :envvar:`COCOTB_HOOKS`, if present, contains a
+    comma-separated list of modules to be executed before the first test.
     """
     _rlock.acquire()
 
@@ -123,12 +140,8 @@ def _initialise_testbench(root_name):
     if exec_path is None:
         exec_path = 'Unknown'
 
-    version = os.getenv('VERSION')
-    if version is None:
-        log.info("Unable to determine Cocotb version from %s" % exec_path)
-    else:
-        log.info("Running tests with Cocotb v%s from %s" %
-                 (version, exec_path))
+    log.info("Running tests with cocotb v%s from %s" %
+             (__version__, exec_path))
 
     # Create the base handle type
 
@@ -173,7 +186,7 @@ def _initialise_testbench(root_name):
 
 
 def _sim_event(level, message):
-    """Function that can be called externally to signal an event"""
+    """Function that can be called externally to signal an event."""
     SIM_INFO = 0
     SIM_TEST_FAIL = 1
     SIM_FAIL = 2

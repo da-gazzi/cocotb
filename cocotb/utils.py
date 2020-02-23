@@ -3,7 +3,7 @@ from __future__ import print_function, division
 # Copyright (c) 2013 Potential Ventures Ltd
 # Copyright (c) 2013 SolarFlare Communications Inc
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #     * Redistributions of source code must retain the above copyright
@@ -15,7 +15,7 @@ from __future__ import print_function, division
 #       SolarFlare Communications Inc nor the
 #       names of its contributors may be used to endorse or promote products
 #       derived from this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -49,8 +49,7 @@ def get_python_integer_types():
     warnings.warn(
         "This is an internal cocotb function, use six.integer_types instead",
         DeprecationWarning)
-    from cocotb import _py_compat
-    return _py_compat.integer_types
+    return (int,)
 
 
 # Simulator helper functions
@@ -104,7 +103,7 @@ def get_sim_steps(time, units=None):
     """Calculates the number of simulation time steps for a given amount of *time*.
 
     Args:
-        time (numbers.Number):  The value to convert to simulation time steps.
+        time (numbers.Real or decimal.Decimal):  The value to convert to simulation time steps.
         units (str or None, optional):  String specifying the units of the result
             (one of ``None``, ``'fs'``, ``'ps'``, ``'ns'``, ``'us'``, ``'ms'``, ``'sec'``).
             ``None`` means time is already in simulation time steps.
@@ -173,13 +172,13 @@ def unpack(ctypes_obj, string, bytes=None):
     """Unpack a Python string into a :mod:`ctypes` structure.
 
     If the length of *string* is not the correct size for the memory
-    footprint of the :mod:`ctypes` structure then the *bytes* keyword argument 
+    footprint of the :mod:`ctypes` structure then the *bytes* keyword argument
     must be used.
 
     Args:
         ctypes_obj (ctypes.Structure): The :mod:`ctypes` structure to pack into.
         string (str):  String to copy over the *ctypes_obj* memory space.
-        bytes (int, optional): Number of bytes to copy. 
+        bytes (int, optional): Number of bytes to copy.
             Defaults to ``None``, meaning the length of *string* is used.
 
     Raises:
@@ -284,7 +283,7 @@ def hexdiffs(x, y):
 
     def highlight(string, colour=ANSI.COLOR_HILITE_HEXDIFF_DEFAULT):
         """Highlight with ANSI colors if possible/requested and not running in GUI."""
-        
+
         if want_color_output():
             return colour + string + ANSI.COLOR_DEFAULT
         else:
@@ -427,8 +426,7 @@ class ParametrizedSingleton(type):
         """Convert the construction arguments into a normalized representation that
         uniquely identifies this singleton.
         """
-        # Once we drop Python 2, we can implement a default like the following,
-        # which will work in 99% of cases:
+        # Could default to something like this, but it would be slow
         # return tuple(inspect.Signature(cls).bind(*args, **kwargs).arguments.items())
         raise NotImplementedError
 
@@ -494,15 +492,18 @@ class lazy_property(object):
 
 
 def want_color_output():
-    """Return ``True`` if colored output is possible/requested and not running in GUI."""
+    """Return ``True`` if colored output is possible/requested and not running in GUI.
+
+    Colored output can be explicitly requested by setting :envvar:`COCOTB_ANSI_OUTPUT` to  ``1``.
+    """
     want_color = sys.stdout.isatty()  # default to color for TTYs
     if os.getenv("COCOTB_ANSI_OUTPUT", default='0') == '1':
         want_color = True
     if os.getenv("GUI", default='0') == '1':
         want_color = False
     return want_color
-        
-    
+
+
 if __name__ == "__main__":
     import random
     a = ""
@@ -536,11 +537,6 @@ def remove_traceback_frames(tb_or_exc, frame_names):
     # self-invoking overloads
     if isinstance(tb_or_exc, BaseException):
         exc = tb_or_exc
-        if sys.version_info < (3,):
-            raise RuntimeError(
-                "Cannot use remove_traceback_frames on exceptions in python 2. "
-                "Call it directly on the traceback object instead.")
-
         return exc.with_traceback(
             remove_traceback_frames(exc.__traceback__, frame_names)
         )

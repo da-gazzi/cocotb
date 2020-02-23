@@ -2,7 +2,6 @@
 Library Reference
 #################
 
-
 Test Results
 ============
 
@@ -31,7 +30,6 @@ Writing and Generating tests
     :members:
     :member-order: bysource
 
-
 Interacting with the Simulator
 ==============================
 
@@ -51,6 +49,12 @@ Interacting with the Simulator
 
 .. autoclass:: cocotb.clock.Clock
 
+.. autofunction:: cocotb.fork
+
+.. autofunction:: cocotb.decorators.RunningTask.join
+
+.. autofunction:: cocotb.decorators.RunningTask.kill
+
 Triggers
 --------
 See :ref:`simulator-triggers` for a list of sub-classes. Below are the internal
@@ -66,6 +70,10 @@ classes used within ``cocotb``.
     :members:
     :member-order: bysource
 
+.. autoclass:: Waitable
+    :members:
+    :member-order: bysource
+    :private-members:
 
 Testbench Structure
 ===================
@@ -137,13 +145,50 @@ Clock
 Utilities
 =========
 
+.. autodata:: cocotb.plusargs
+
 .. automodule:: cocotb.utils
     :members:
     :member-order: bysource
     :synopsis: Various utilities for testbench writers.
 
+.. _logging-reference-section:
+
+Logging
+-------
+
+.. currentmodule:: cocotb.log
+
+.. autofunction:: default_config
+
+.. autoclass:: SimLogFormatter
+    :show-inheritance:
+    :no-members:
+
+.. autoclass:: SimColourLogFormatter
+    :show-inheritance:
+    :no-members:
+
+.. autoclass:: SimTimeContextFilter
+    :show-inheritance:
+    :no-members:
+
+.. currentmodule:: None
+
+.. attribute:: logging.LogRecord.created_sim_time
+
+    The result of :func:`get_sim_time` at the point the log was created
+    (in simulator units). The formatter is responsible for converting this
+    to something like nanoseconds via :func:`~cocotb.utils.get_time_from_sim_steps`.
+
+    This is added by :class:`cocotb.log.SimTimeContextFilter`.
+
+
 Simulation Object Handles
 =========================
+
+.. inheritance-diagram:: cocotb.handle
+   :parts: 1
 
 .. currentmodule:: cocotb.handle
 
@@ -153,26 +198,26 @@ Simulation Object Handles
     :show-inheritance:
     :synopsis: Classes for simulation objects.
 
+.. assigment-methods-section
+
+Assignment Methods
+------------------
+
+.. currentmodule:: cocotb.handle
+
+.. autoclass:: Deposit
+
+.. autoclass:: Force
+
+.. autoclass:: Freeze
+
+.. autoclass:: Release
+
 Implemented Testbench Structures
 ================================
 
 Drivers
 -------
-
-AD9361
-~~~~~~
-
-Analog Devices AD9361 RF Transceiver.
-
-.. currentmodule:: cocotb.drivers.ad9361
-
-.. autoclass:: AD9361
-
-    .. automethod:: send_data(i_data, q_data, i_data2=None, q_data2=None, binaryRepresentation=BinaryRepresentation.TWOS_COMPLEMENT)
-    .. automethod:: rx_data_to_ad9361(i_data, q_data, i_data2=None, q_data2=None, binaryRepresentation=BinaryRepresentation.TWOS_COMPLEMENT)
-    .. automethod:: ad9361_tx_to_rx_loopback()
-    .. automethod:: tx_data_from_ad9361()
-
 
 AMBA
 ~~~~
@@ -270,3 +315,43 @@ XGMII
     :members:
     :member-order: bysource
     :show-inheritance:
+
+Miscellaneous
+=============
+
+Signal Tracer for WaveDrom
+--------------------------
+
+.. automodule:: cocotb.wavedrom
+    :members:
+    :member-order: bysource
+    :synopsis: A signal tracer for WaveDrom.
+
+
+Developer-focused
+=================
+
+The Scheduler
+-------------
+
+.. note::
+    The scheduler object should generally not be interacted with directly -
+    the only part of it that a user will need is encapsulated in :func:`~cocotb.fork`,
+    everything else works behind the scenes.
+
+.. currentmodule:: cocotb.scheduler
+
+.. autodata:: cocotb.scheduler
+
+.. autoclass:: Scheduler
+    :members:
+    :member-order: bysource
+
+
+The ``cocotb-config`` script
+----------------------------
+
+.. argparse::
+    :module: cocotb.config
+    :func: get_parser
+    :prog: cocotb-config

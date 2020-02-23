@@ -27,8 +27,28 @@
 
 #include <assert.h>
 #include "VhpiImpl.h"
+#include <limits>     // numeric_limits
+#include <cinttypes>  // fixed-size int types and format strings
+
+namespace {
+    using bufSize_type = decltype(vhpiValueT::bufSize);
+}
 
 extern "C" void handle_vhpi_callback(const vhpiCbDataT *cb_data);
+
+VhpiArrayObjHdl::~VhpiArrayObjHdl()
+{
+    LOG_DEBUG("Releasing VhpiArrayObjHdl handle at %p\n", (void *)get_handle<vhpiHandleT>());
+    if (vhpi_release_handle(get_handle<vhpiHandleT>()))
+        check_vhpi_error();
+}
+
+VhpiObjHdl::~VhpiObjHdl()
+{
+    LOG_DEBUG("Releasing VhpiObjHdl handle at %p\n", (void *)get_handle<vhpiHandleT>());
+    if (vhpi_release_handle(get_handle<vhpiHandleT>()))
+        check_vhpi_error();
+}
 
 VhpiSignalObjHdl::~VhpiSignalObjHdl()
 {
@@ -36,13 +56,17 @@ VhpiSignalObjHdl::~VhpiSignalObjHdl()
         case vhpiIntVecVal:
         case vhpiEnumVecVal:
         case vhpiLogicVecVal:
-            free(m_value.value.enumvs);
+            delete [] m_value.value.enumvs;
         default:
             break;
     }
 
     if (m_binvalue.value.str)
-        free(m_binvalue.value.str);
+        delete [] m_binvalue.value.str;
+
+    LOG_DEBUG("Releasing VhpiSignalObjHdl handle at %p\n", (void *)get_handle<vhpiHandleT>());
+    if (vhpi_release_handle(get_handle<vhpiHandleT>()))
+        check_vhpi_error();
 }
 
 bool get_range(vhpiHandleT hdl, vhpiIntT dim, int *left, int *right) {
@@ -84,8 +108,8 @@ bool get_range(vhpiHandleT hdl, vhpiIntT dim, int *left, int *right) {
                     if (vhpi_get(vhpiIsUnconstrainedP, constraint)) {
 #endif
                         error = false;
-                        *left  = l_rng;
-                        *right = r_rng;
+                        *left  = static_cast<int>(l_rng);
+                        *right = static_cast<int>(r_rng);
                     }
                     break;
                 }
@@ -111,8 +135,8 @@ bool get_range(vhpiHandleT hdl, vhpiIntT dim, int *left, int *right) {
                         /* IUS/Xcelium only sets the vhpiIsUnconstrainedP incorrectly on the base type */
                         if (!vhpi_get(vhpiIsUnconstrainedP, constraint)) {
                             error = false;
-                            *left  = vhpi_get(vhpiLeftBoundP, constraint);
-                            *right = vhpi_get(vhpiRightBoundP, constraint);
+                            *left  = static_cast<int>(vhpi_get(vhpiLeftBoundP, constraint));
+                            *right = static_cast<int>(vhpi_get(vhpiRightBoundP, constraint));
                         }
                         break;
                     }
@@ -125,6 +149,24 @@ bool get_range(vhpiHandleT hdl, vhpiIntT dim, int *left, int *right) {
 
     return error;
 
+}
+
+vhpiPutValueModeT map_put_value_mode(gpi_set_action_t action) {
+    vhpiPutValueModeT put_value_mode = vhpiDeposit;
+    switch (action) {
+        case GPI_DEPOSIT:
+            put_value_mode = vhpiDepositPropagate;
+            break;
+        case GPI_FORCE:
+            put_value_mode = vhpiForcePropagate;
+            break;
+        case GPI_RELEASE:
+            put_value_mode = vhpiRelease;
+            break;
+        default:
+            assert(0);
+    }
+    return put_value_mode;
 }
 
 int VhpiArrayObjHdl::initialise(std::string &name, std::string &fq_name) {
@@ -198,7 +240,7 @@ int VhpiObjHdl::initialise(std::string &name, std::string &fq_name) {
                 str = vhpi_get_str(vhpiNameP, pu_handle);
                 if (str != NULL)
                     m_definition_name = str;
-      
+
                 str = vhpi_get_str(vhpiFileNameP, pu_handle);
                 if (str != NULL)
                     m_definition_file = str;
@@ -249,9 +291,10 @@ int VhpiSignalObjHdl::initialise(std::string &name, std::string &fq_name) {
 
         case vhpiStrVal: {
             m_indexable = true;
-            m_num_elems = vhpi_get(vhpiSizeP, handle);
-            m_value.bufSize = (m_num_elems)*sizeof(vhpiCharT) + 1;
-            m_value.value.str = (vhpiCharT *)malloc(m_value.bufSize);
+            m_num_elems = static_cast<int>(vhpi_get(vhpiSizeP, handle));
+            int bufSize = m_num_elems * static_cast<int>(sizeof(vhpiCharT)) + 1;
+            m_value.bufSize = static_cast<bufSize_type>(bufSize);
+            m_value.value.str = new vhpiCharT[bufSize];
             m_value.numElems = m_num_elems;
             if (!m_value.value.str) {
                 LOG_CRITICAL("Unable to alloc mem for write buffer");
@@ -272,8 +315,9 @@ int VhpiSignalObjHdl::initialise(std::string &name, std::string &fq_name) {
     }
 
     if (m_num_elems) {
-        m_binvalue.bufSize = m_num_elems*sizeof(vhpiCharT) + 1;
-        m_binvalue.value.str = (vhpiCharT *)calloc(m_binvalue.bufSize, sizeof(vhpiCharT));
+        int bufSize = m_num_elems * static_cast<int>(sizeof(vhpiCharT)) + 1;
+        m_binvalue.bufSize = static_cast<bufSize_type>(bufSize);
+        m_binvalue.value.str = new vhpiCharT[bufSize];
 
         if (!m_binvalue.value.str) {
             LOG_CRITICAL("Unable to alloc mem for read buffer of signal %s", name.c_str());
@@ -310,7 +354,7 @@ int VhpiLogicSignalObjHdl::initialise(std::string &name, std::string &fq_name) {
 
     vhpiHandleT query_hdl = (base_hdl != NULL) ? base_hdl : handle;
 
-    m_num_elems = vhpi_get(vhpiSizeP, handle);
+    m_num_elems = static_cast<int>(vhpi_get(vhpiSizeP, handle));
 
     if (m_num_elems == 0) {
         LOG_DEBUG("Null vector... Delete object")
@@ -320,8 +364,9 @@ int VhpiLogicSignalObjHdl::initialise(std::string &name, std::string &fq_name) {
     if (vhpi_get(vhpiKindP, query_hdl) == vhpiArrayTypeDeclK) {
         m_indexable = true;
         m_value.format = vhpiLogicVecVal;
-        m_value.bufSize = m_num_elems*sizeof(vhpiEnumT);
-        m_value.value.enumvs = (vhpiEnumT *)malloc(m_value.bufSize + 1);
+        int bufSize = m_num_elems * static_cast<int>(sizeof(vhpiEnumT));
+        m_value.bufSize = static_cast<bufSize_type>(bufSize);
+        m_value.value.enumvs = new vhpiEnumT[bufSize];
         if (!m_value.value.enumvs) {
             LOG_CRITICAL("Unable to alloc mem for write buffer: ABORTING");
         }
@@ -332,8 +377,9 @@ int VhpiLogicSignalObjHdl::initialise(std::string &name, std::string &fq_name) {
     }
 
     if (m_num_elems) {
-        m_binvalue.bufSize = m_num_elems*sizeof(vhpiCharT) + 1;
-        m_binvalue.value.str = (vhpiCharT *)calloc(m_binvalue.bufSize, sizeof(vhpiCharT));
+        int bufSize = m_num_elems * static_cast<int>(sizeof(vhpiCharT)) + 1;
+        m_binvalue.bufSize = static_cast<bufSize_type>(bufSize);
+        m_binvalue.value.str = new vhpiCharT[bufSize];
 
         if (!m_binvalue.value.str) {
             LOG_CRITICAL("Unable to alloc mem for read buffer of signal %s", name.c_str());
@@ -424,7 +470,7 @@ error:
 }
 
 // Value related functions
-const vhpiEnumT VhpiSignalObjHdl::chr2vhpi(const char value)
+vhpiEnumT VhpiSignalObjHdl::chr2vhpi(const char value)
 {
     switch (value) {
         case '0':
@@ -446,7 +492,7 @@ const vhpiEnumT VhpiSignalObjHdl::chr2vhpi(const char value)
 }
 
 // Value related functions
-int VhpiLogicSignalObjHdl::set_signal_value(long value)
+int VhpiLogicSignalObjHdl::set_signal_value(long value, gpi_set_action_t action)
 {
     switch (m_value.format) {
         case vhpiEnumVal:
@@ -471,7 +517,7 @@ int VhpiLogicSignalObjHdl::set_signal_value(long value)
         }
     }
 
-    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, vhpiDepositPropagate)) {
+    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, map_put_value_mode(action))) {
         check_vhpi_error();
         return -1;
     }
@@ -479,7 +525,7 @@ int VhpiLogicSignalObjHdl::set_signal_value(long value)
     return 0;
 }
 
-int VhpiLogicSignalObjHdl::set_signal_value(std::string &value)
+int VhpiLogicSignalObjHdl::set_signal_value_binstr(std::string &value, gpi_set_action_t action)
 {
     switch (m_value.format) {
         case vhpiEnumVal:
@@ -516,7 +562,7 @@ int VhpiLogicSignalObjHdl::set_signal_value(std::string &value)
         }
     }
 
-    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, vhpiDepositPropagate)) {
+    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, map_put_value_mode(action))) {
         check_vhpi_error();
         return -1;
     }
@@ -525,14 +571,14 @@ int VhpiLogicSignalObjHdl::set_signal_value(std::string &value)
 }
 
 // Value related functions
-int VhpiSignalObjHdl::set_signal_value(long value)
+int VhpiSignalObjHdl::set_signal_value(long value, gpi_set_action_t action)
 {
     switch (m_value.format) {
         case vhpiEnumVecVal:
         case vhpiLogicVecVal: {
             int i;
             for (i=0; i<m_num_elems; i++)
-                m_value.value.enumvs[m_num_elems-i-1] = value&(1L<<i);
+                m_value.value.enumvs[m_num_elems-i-1] = value&(1L<<i) ? vhpi1 : vhpi0;
 
             // Since we may not get the numElems correctly from the sim and have to infer it
             // we also need to set it here as well each time.
@@ -543,17 +589,32 @@ int VhpiSignalObjHdl::set_signal_value(long value)
 
         case vhpiLogicVal:
         case vhpiEnumVal: {
-            m_value.value.enumv = value;
+            using EnumLimits = std::numeric_limits<vhpiEnumT>;
+            if ((value > EnumLimits::max()) || (value < EnumLimits::min())) {
+                LOG_ERROR("Data loss detected");
+                return -1;
+            }
+            m_value.value.enumv = static_cast<vhpiEnumT>(value);
             break;
         }
 
         case vhpiIntVal: {
-            m_value.value.intg = value;
+            using IntLimits = std::numeric_limits<vhpiIntT>;
+            if ((value > IntLimits::max()) || (value < IntLimits::min())) {
+                LOG_ERROR("Data loss detected");
+                return -1;
+            }
+            m_value.value.intg = static_cast<vhpiIntT>(value);
             break;
         }
 
         case vhpiCharVal: {
-            m_value.value.ch = value;
+            using CharLimits = std::numeric_limits<vhpiCharT>;
+            if ((value > CharLimits::max()) || (value < CharLimits::min())) {
+                LOG_ERROR("Data loss detected");
+                return -1;
+            }
+            m_value.value.ch = static_cast<vhpiCharT>(value);
             break;
         }
 
@@ -563,7 +624,7 @@ int VhpiSignalObjHdl::set_signal_value(long value)
             return -1;
         }
     }
-    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, vhpiDepositPropagate)) {
+    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, map_put_value_mode(action))) {
         check_vhpi_error();
         return -1;
     }
@@ -571,7 +632,7 @@ int VhpiSignalObjHdl::set_signal_value(long value)
     return 0;
 }
 
-int VhpiSignalObjHdl::set_signal_value(double value)
+int VhpiSignalObjHdl::set_signal_value(double value, gpi_set_action_t action)
 {
     switch (m_value.format) {
         case vhpiRealVal:
@@ -581,14 +642,14 @@ int VhpiSignalObjHdl::set_signal_value(double value)
             break;
 
         default: {
-            LOG_ERROR("VHPI: Unable to set a Real handle this format type %s",
+            LOG_ERROR("VHPI: Unable to set a Real handle with format type %s",
                       ((VhpiImpl*)GpiObjHdl::m_impl)->format_to_string(m_value.format));
             return -1;
         }
 
     }
 
-    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, vhpiDepositPropagate)) {
+    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, map_put_value_mode(action))) {
         check_vhpi_error();
         return -1;
     }
@@ -596,7 +657,7 @@ int VhpiSignalObjHdl::set_signal_value(double value)
     return 0;
 }
 
-int VhpiSignalObjHdl::set_signal_value(std::string &value)
+int VhpiSignalObjHdl::set_signal_value_binstr(std::string &value, gpi_set_action_t action)
 {
     switch (m_value.format) {
         case vhpiEnumVal:
@@ -627,10 +688,29 @@ int VhpiSignalObjHdl::set_signal_value(std::string &value)
             break;
         }
 
+        default: {
+            LOG_ERROR("VHPI: Unable to handle this format type %s",
+                      ((VhpiImpl*)GpiObjHdl::m_impl)->format_to_string(m_value.format));
+            return -1;
+        }
+    }
+
+    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, map_put_value_mode(action))) {
+        check_vhpi_error();
+        return -1;
+    }
+
+    return 0;
+}
+
+int VhpiSignalObjHdl::set_signal_value_str(std::string &value, gpi_set_action_t action)
+{
+    switch (m_value.format) {
+
         case vhpiStrVal: {
             std::vector<char> writable(value.begin(), value.end());
             writable.push_back('\0');
-            strncpy(m_value.value.str, &writable[0], m_value.numElems);
+            strncpy(m_value.value.str, &writable[0], static_cast<size_t>(m_value.numElems));
             m_value.value.str[m_value.numElems] = '\0';
             break;
         }
@@ -642,7 +722,7 @@ int VhpiSignalObjHdl::set_signal_value(std::string &value)
         }
     }
 
-    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, vhpiDepositPropagate)) {
+    if (vhpi_put_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_value, map_put_value_mode(action))) {
         check_vhpi_error();
         return -1;
     }
@@ -662,7 +742,7 @@ const char* VhpiSignalObjHdl::get_signal_value_binstr()
             int ret = vhpi_get_value(GpiObjHdl::get_handle<vhpiHandleT>(), &m_binvalue);
             if (ret) {
                 check_vhpi_error();
-                LOG_ERROR("Size of m_binvalue.value.str was not large enough req=%d have=%d for type %s",
+                LOG_ERROR("Size of m_binvalue.value.str was not large enough: req=%d have=%d for type %s",
                           ret,
                           m_binvalue.bufSize,
                           ((VhpiImpl*)GpiObjHdl::m_impl)->format_to_string(m_value.format));
@@ -723,7 +803,7 @@ long VhpiSignalObjHdl::get_signal_value_long()
 }
 
 
-GpiCbHdl * VhpiSignalObjHdl::value_change_cb(unsigned int edge)
+GpiCbHdl * VhpiSignalObjHdl::value_change_cb(int edge)
 {
     VhpiValueCbHdl *cb = NULL;
 
@@ -769,17 +849,17 @@ int VhpiStartupCbHdl::run_callback() {
     vhpiHandleT tool, argv_iter, argv_hdl;
     gpi_sim_info_t sim_info;
     char **tool_argv = NULL;
-    uint32_t tool_argc = 0;
+    int tool_argc = 0;
     int i = 0;
 
     tool = vhpi_handle(vhpiTool, NULL);
-    
+
     sim_info.product = const_cast<char*>(static_cast<const char*>(vhpi_get_str(vhpiNameP, tool)));
     sim_info.version = const_cast<char*>(static_cast<const char*>(vhpi_get_str(vhpiToolVersionP, tool)));
 
     if (tool) {
-        tool_argc = vhpi_get(vhpiArgcP, tool);
-        tool_argv = (char **)malloc(sizeof(char *) * tool_argc);
+        tool_argc = static_cast<int>(vhpi_get(vhpiArgcP, tool));
+        tool_argv = new char*[tool_argc];
         assert(tool_argv);
 
         argv_iter = vhpi_iterator(vhpiArgvs, tool);
@@ -797,7 +877,7 @@ int VhpiStartupCbHdl::run_callback() {
     }
 
     gpi_embed_init(&sim_info);
-    free(tool_argv);
+    delete [] tool_argv;
 
     return 0;
 }
@@ -818,7 +898,7 @@ VhpiTimedCbHdl::VhpiTimedCbHdl(GpiImplInterface *impl, uint64_t time_ps) : GpiCb
                                                                            VhpiCbHdl(impl)
 {
     vhpi_time.high = (uint32_t)(time_ps>>32);
-    vhpi_time.low  = (uint32_t)(time_ps); 
+    vhpi_time.low  = (uint32_t)(time_ps);
 
     cb_data.reason = vhpiCbAfterDelay;
     cb_data.time = &vhpi_time;
@@ -975,13 +1055,12 @@ VhpiIterator::VhpiIterator(GpiImplInterface *impl, GpiObjHdl *hdl) : GpiIterator
         return;
     }
 
-    LOG_DEBUG("Created iterator working from scope %d (%s)", 
+    LOG_DEBUG("Created iterator working from scope %d (%s)",
              vhpi_get(vhpiKindP, vhpi_hdl),
              vhpi_get_str(vhpiKindStrP, vhpi_hdl));
 
-    /* On some simulators (Aldec) vhpiRootInstK is a null level of hierachy
-     * We check that something is going to come back if not we try the level
-     * down
+    /* On some simulators (Aldec) vhpiRootInstK is a null level of hierarchy.
+     * We check that something is going to come back, if not, we try the level down.
      */
     m_iter_obj = vhpi_hdl;
     m_iterator = iterator;
@@ -1010,7 +1089,7 @@ GpiIterator::Status VhpiIterator::next_handle(std::string &name,
 
     /* We want the next object in the current mapping.
      * If the end of mapping is reached then we want to
-     * try then next one until a new object is found
+     * try the next one until a new object is found.
      */
     do {
         obj = NULL;
@@ -1079,14 +1158,14 @@ GpiIterator::Status VhpiIterator::next_handle(std::string &name,
 
     const char *c_name = vhpi_get_str(vhpiCaseNameP, obj);
     if (!c_name) {
-        int type = vhpi_get(vhpiKindP, obj);
+        vhpiIntT type = vhpi_get(vhpiKindP, obj);
 
         if (type < VHPI_TYPE_MIN) {
             *raw_hdl = (void*)obj;
             return GpiIterator::NOT_NATIVE_NO_NAME;
         }
 
-        LOG_DEBUG("Unable to get the name for this object of type %d", type);
+        LOG_DEBUG("Unable to get the name for this object of type " PRIu32, type);
 
         return GpiIterator::NATIVE_NO_NAME;
     }

@@ -54,7 +54,6 @@ from cocotb.result import (
 from cocotb.utils import get_sim_time
 
 from cocotb.binary import BinaryValue
-from cocotb import _py_compat
 
 
 @contextlib.contextmanager
@@ -82,7 +81,7 @@ def assert_raises(exc_type):
 # Tests relating to providing meaningful errors if we forget to use the
 # yield keyword correctly to turn a function into a coroutine
 
-@cocotb.test(expect_fail=True)
+@cocotb.test(expect_error=TypeError)
 def test_not_a_coroutine(dut):
     """Example of a failing to use the yield keyword in a test"""
     dut._log.warning("This test will fail because we don't yield anything")
@@ -176,11 +175,6 @@ def clock_yield(generator):
     global test_flag
     yield Join(generator)
     test_flag = True
-
-
-@cocotb.test(expect_fail=True)
-def test_duplicate_yield(dut):
-    """A trigger can not be yielded on twice"""
 
 
 @cocotb.test(expect_fail=False)
@@ -671,6 +665,12 @@ def test_logging_with_args(dut):
     dut._log.info("%s", counter)
     assert counter.str_counter == 1
 
+    # now try again on the root cocotb logger, which unlike nested loggers
+    # is captured
+    counter = StrCallCounter()
+    cocotb.log.info("%s", counter)
+    assert counter.str_counter == 2  # once for stdout, once for captured logs
+
     dut._log.info("No substitution")
 
     dut._log.warning("Testing multiple line\nmessage")
@@ -715,7 +715,7 @@ def test_binary_value(dut):
         raise TestFailure("Expecting our BinaryValue object to have the value 0.")
 
     dut._log.info("Checking single index assignment works as expected on a Little Endian BinaryValue.")
-    vec = BinaryValue(value=0, bits=16, bigEndian=False)
+    vec = BinaryValue(value=0, n_bits=16, bigEndian=False)
     if vec.big_endian:
         raise TestFailure("Our BinaryValue object is reporting it is Big Endian - was expecting Little Endian.")
     for x in range(vec.n_bits):
@@ -751,7 +751,9 @@ def test_binary_value_compat(dut):
     """
 
     dut._log.info("Checking the renaming of bits -> n_bits")
-    vec = BinaryValue(value=0, bits=16)
+    with assert_deprecated():
+        vec = BinaryValue(value=0, bits=16)
+
     if vec.n_bits != 16:
         raise TestFailure("n_bits is not set correctly - expected %d, got %d" % (16, vec.n_bits))
 
@@ -765,10 +767,6 @@ def test_binary_value_compat(dut):
         pass
     else:
         raise TestFailure("Expected TypeError when using bits and n_bits at the same time.")
-
-    # Test for the DeprecationWarning when using |bits|
-    with assert_deprecated():
-        vec = BinaryValue(value=0, bits=16)
 
     yield Timer(100)  # Make it do something with time
 
@@ -910,24 +908,19 @@ def test_tests_are_tests(dut):
     assert isinstance(test_tests_are_tests, cocotb.test)
 
 
-if sys.version_info[:2] >= (3, 3):
-    # this would be a syntax error in older python, so we do the whole
-    # thing inside exec
-    _py_compat.exec_(textwrap.dedent('''
-    @cocotb.test()
-    def test_coroutine_return(dut):
-        """ Test that the Python 3.3 syntax for returning from generators works """
-        @cocotb.coroutine
-        def return_it(x):
-            return x
+@cocotb.test()
+def test_coroutine_return(dut):
+    """ Test that the Python 3.3 syntax for returning from generators works """
+    @cocotb.coroutine
+    def return_it(x):
+        return x
 
-            # this makes `return_it` a coroutine
-            yield
+        # this makes `return_it` a coroutine
+        yield
 
-        ret = yield return_it(42)
-        if ret != 42:
-            raise TestFailure("Return statement did not work")
-    '''))
+    ret = yield return_it(42)
+    if ret != 42:
+        raise TestFailure("Return statement did not work")
 
 
 @cocotb.coroutine
@@ -1251,5 +1244,76 @@ def test_assertion_is_failure(dut):
     assert False
 
 
-if sys.version_info[:2] >= (3, 5):
-    from test_cocotb_35 import *
+class MyException(Exception):
+    pass
+
+
+@cocotb.test(expect_error=MyException)
+def test_expect_particular_exception(dut):
+    yield Timer(1)
+    raise MyException()
+
+
+@cocotb.test(expect_error=(MyException, ValueError))
+def test_expect_exception_list(dut):
+    yield Timer(1)
+    raise MyException()
+
+
+@cocotb.coroutine
+def example():
+    yield Timer(10, 'ns')
+    raise ReturnValue(1)
+
+
+@cocotb.test()
+def test_timeout_func_fail(dut):
+    try:
+        yield cocotb.triggers.with_timeout(example(), timeout_time=1, timeout_unit='ns')
+    except cocotb.result.SimTimeoutError:
+        pass
+    else:
+        assert False, "Expected a Timeout"
+
+
+@cocotb.test()
+def test_timeout_func_pass(dut):
+    res = yield cocotb.triggers.with_timeout(example(), timeout_time=100, timeout_unit='ns')
+    assert res == 1
+
+
+@cocotb.test(expect_error=cocotb.result.SimTimeoutError, timeout_time=1, timeout_unit='ns')
+def test_timeout_testdec_fail(dut):
+    yield Timer(10, 'ns')
+
+
+@cocotb.test(timeout_time=100, timeout_unit='ns')
+def test_timeout_testdec_pass(dut):
+    yield Timer(10, 'ns')
+
+
+@cocotb.test(timeout_time=10, timeout_unit='ns')
+def test_timeout_testdec_simultaneous(dut):
+    try:
+        yield cocotb.triggers.with_timeout(Timer(1, 'ns'), timeout_time=1, timeout_unit='ns')
+    except cocotb.result.SimTimeoutError:
+        pass
+    else:
+        assert False, "Expected a Timeout"
+    # Whether this test fails or passes depends on the behavior of the
+    # scheduler, simulator, and the implementation of the timeout function.
+    # CAUTION: THIS MAY CHANGE
+
+
+@cocotb.test()
+def test_bad_attr(dut):
+    yield cocotb.triggers.NullTrigger()
+    try:
+        _ = dut.stream_in_data.whoops
+    except AttributeError as e:
+        assert 'whoops' in str(e)
+    else:
+        assert False, "Expected AttributeError"
+
+
+from test_cocotb_35 import *

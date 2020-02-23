@@ -31,14 +31,14 @@ Have you fixed a bug in cocotb, or want to add new functionality to it?
 Cocotb follows the typical [GitHub flow](https://guides.github.com/introduction/flow/) and makes use of pull requests and reviews.
 Follow the steps below to get your changes merged, i.e. integrated into the main cocotb codebase.
 
-1. Create an issue ticket on [cocotb's GitHub issue tracker](https://github.com/potentialventures/cocotb/issues) describing the problem.
+1. Create an issue ticket on [cocotb's GitHub issue tracker](https://github.com/cocotb/cocotb/issues) describing the problem.
    Issues are also a good place to discuss design options with others before writing code.
-2. [Fork](https://help.github.com/articles/fork-a-repo/) the [cocotb GitHub repository](https://github.com/potentialventures/cocotb) into your personal namespace.
+2. [Fork](https://help.github.com/articles/fork-a-repo/) the [cocotb GitHub repository](https://github.com/cocotb/cocotb) into your personal namespace.
 3. Create a new branch off the `master` branch for your set of changes.
    Use one branch per "topic," i.e. per set of changes which belong together.
 4. Create one or multiple commits to address the issue.
    Make sure to read and follow the [Patch Requirements](#patch-requirements) when preparing your commits.
-5. Create new [pull request (PR)](https://github.com/potentialventures/cocotb/pulls).
+5. Create new [pull request (PR)](https://github.com/cocotb/cocotb/pulls).
 6. When you submit (or update) the pull request, a suite of regression tests will run.
    If any of them turns "red," i.e. reports a failure, you most likely need to fix your code before it can be merged.
 7. The pull request needs to be reviewed by at least one maintainer.
@@ -54,13 +54,14 @@ Patch Requirements
 All changes which should go into the main codebase of cocotb must follow this set of requirements.
 
 - The code must be within the [scope of cocotb](#architecture-and-scope-of-cocotb).
-- All code must be licensed under the [Revised BSD License](https://github.com/potentialventures/cocotb/blob/master/LICENSE).
+- All code must be licensed under the [Revised BSD License](https://github.com/cocotb/cocotb/blob/master/LICENSE).
   By contributing to this project you signal your agreement with these license terms.
 - All code must follow the established coding standards.
   For Python code, follow the [PEP 8](https://www.python.org/dev/peps/pep-0008/) style guide.
 - All code must pass existing tests.
   New functionality must be accompanied by tests, and bug fixes should add tests to increase the test coverage and prevent regressions.
 - If code changes or enhances documented behavior the documentation should be updated.
+- If a change is user-visible, a newsfragment should be added to `documentation/source/newsfragments`.
 - All pull requests must be accepted by at least one maintainer, with no maintainer strongly objecting.
   Reviews must be performed by a person other than the primary author of the code.
 - All commits should follow established best practices when creating a commit message:
@@ -130,7 +131,9 @@ Most maintainers are experts in part of the cocotb codebase, and are primarily r
   Founder of cocotb.
 - Stuart Hodgson (@stuarthodgson).
   Founder of cocotb.
+- Colin Marquardt (@cmarqu)
 - Philipp Wagner (@imphil)
+- Eric Wieser (@eric-wieser)
 
 Code of Conduct
 ---------------

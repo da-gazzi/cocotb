@@ -28,24 +28,33 @@
 ******************************************************************************/
 
 #include <Python.h>
-#include "../compat/python3_compat.h"
 #include <gpi_logging.h>
 
 // Used to log using the standard python mechanism
-static PyObject *pLogHandler;
-static PyObject *pLogFilter;
+static PyObject *pLogHandler = NULL;
+static PyObject *pLogFilter = NULL;
 static enum gpi_log_levels local_level = GPIInfo;
 
 void set_log_handler(void *handler)
 {
-    pLogHandler = (PyObject *)handler;
-    Py_INCREF(pLogHandler);
+    pLogHandler = (PyObject *)handler;      // Note: This function steals a reference to handler.
+}
+
+void clear_log_handler(void)
+{
+    Py_XDECREF(pLogHandler);
+    pLogHandler = NULL;
 }
 
 void set_log_filter(void *filter)
 {
-    pLogFilter = (PyObject *)filter;
-    Py_INCREF(pLogFilter);
+    pLogFilter = (PyObject *)filter;        // Note: This function steals a reference to filter.
+}
+
+void clear_log_filter(void)
+{
+    Py_XDECREF(pLogFilter);
+    pLogFilter = NULL;
 }
 
 void set_log_level(enum gpi_log_levels new_level)
@@ -89,6 +98,51 @@ const char *log_level(long level)
 #define LOG_SIZE    512
 static char log_buff[LOG_SIZE];
 
+
+/**
+ * Log without going through the python hook.
+ *
+ * This is needed for both when the hook isn't connected yet, and for when a
+ * python exception occurs while trying to use the hook.
+ */
+static void gpi_log_native_v(const char *name, enum gpi_log_levels level, const char *pathname, const char *funcname, long lineno, const char *msg, va_list argp)
+{
+    if (level < GPIInfo) {
+        return;
+    }
+
+    int n = vsnprintf(log_buff, LOG_SIZE, msg, argp);
+
+    if (n < 0 || n >= LOG_SIZE) {
+        fprintf(stderr, "Log message construction failed\n");
+    }
+
+    fprintf(stdout, "     -.--ns ");
+    fprintf(stdout, "%-9s", log_level(level));
+    fprintf(stdout, "%-35s", name);
+
+    size_t pathlen = strlen(pathname);
+    if (pathlen > 20) {
+        fprintf(stdout, "..%18s:", (pathname + (pathlen - 18)));
+    } else {
+        fprintf(stdout, "%20s:", pathname);
+    }
+
+    fprintf(stdout, "%-4ld", lineno);
+    fprintf(stdout, " in %-31s ", funcname);
+    fprintf(stdout, "%s", log_buff);
+    fprintf(stdout, "\n");
+    fflush(stdout);
+}
+
+static void gpi_log_native(const char *name, enum gpi_log_levels level, const char *pathname, const char *funcname, long lineno, const char *msg, ...)
+{
+    va_list argp;
+    va_start(argp, msg);
+    gpi_log_native_v(name, level, pathname, funcname, lineno, msg, argp);
+    va_end(argp);
+}
+
 /**
  * @name    GPI logging
  * @brief   Write a log message using cocotb SimLog class
@@ -103,96 +157,105 @@ static char log_buff[LOG_SIZE];
  * If the Python logging mechanism is not initialised, dumps to `stderr`.
  *
  */
-void gpi_log(const char *name, long level, const char *pathname, const char *funcname, long lineno, const char *msg, ...)
+static void gpi_log_v(const char *name, enum gpi_log_levels level, const char *pathname, const char *funcname, long lineno, const char *msg, va_list argp)
 {
     /* We first check that the log level means this will be printed
-     * before going to the expense of processing the variable
-     * arguments
+     * before going to the expense of formatting the variable arguments
      */
-    va_list ap;
-    int n;
-
     if (!pLogHandler) {
-        if (level >= GPIInfo) {
-            va_start(ap, msg);
-            n = vsnprintf(log_buff, LOG_SIZE, msg, ap);
-            va_end(ap);
-
-            if (n < 0) {
-               fprintf(stderr, "Log message construction failed\n");
-            }
-
-            fprintf(stdout, "     -.--ns ");
-            fprintf(stdout, "%-9s", log_level(level));
-            fprintf(stdout, "%-35s", name);
-
-            n = strlen(pathname);
-            if (n > 20) {
-                fprintf(stdout, "..%18s:", (pathname + (n - 18)));
-            } else {
-                fprintf(stdout, "%20s:", pathname);
-            }
-
-            fprintf(stdout, "%-4ld", lineno);
-            fprintf(stdout, " in %-31s ", funcname);
-            fprintf(stdout, "%s", log_buff);
-            fprintf(stdout, "\n");
-            fflush(stdout);
-        }
+        gpi_log_native_v(name, level, pathname, funcname, lineno, msg, argp);
         return;
     }
 
     if (level < local_level)
         return;
 
-    // Ignore truncation
-    // calling args is level, filename, lineno, msg, function
-    //
     PyGILState_STATE gstate = PyGILState_Ensure();
 
-    PyObject *check_args = PyTuple_New(1);
-    PyTuple_SetItem(check_args, 0, PyLong_FromLong(level));
+    // Declared here in order to be initialized before any goto statements and refcount cleanup
+    PyObject *logger_name_arg = NULL, *filename_arg = NULL, *lineno_arg = NULL, *msg_arg = NULL, *function_arg = NULL;
 
-    PyObject *filter_ret = PyObject_CallObject(pLogFilter, check_args);
-    Py_DECREF(check_args);
-    if (filter_ret == NULL) {
-        PyErr_Print();
-        PyGILState_Release(gstate);
-        return;
+    PyObject *level_arg = PyLong_FromLong(level);                  // New reference
+    if (level_arg == NULL) {
+        goto error;
     }
+
+    logger_name_arg = PyUnicode_FromString(name);      // New reference
+    if (logger_name_arg == NULL) {
+        goto error;
+    }
+
+    PyObject *filter_ret = PyObject_CallFunctionObjArgs(pLogFilter, logger_name_arg, level_arg, NULL);
+    if (filter_ret == NULL) {
+        goto error;
+    }
+
     int is_enabled = PyObject_IsTrue(filter_ret);
     Py_DECREF(filter_ret);
     if (is_enabled < 0) {
         /* A python exception occured while converting `filter_ret` to bool */
-        PyErr_Print();
-        PyGILState_Release(gstate);
-        return;
+        goto error;
     }
 
     if (!is_enabled) {
-        PyGILState_Release(gstate);
-        return;
+        goto ok;
     }
 
-    va_start(ap, msg);
-    n = vsnprintf(log_buff, LOG_SIZE, msg, ap);
-    va_end(ap);
+    // Ignore truncation
+    {
+        int n = vsnprintf(log_buff, LOG_SIZE, msg, argp);
+        if (n < 0 || n >= LOG_SIZE) {
+            fprintf(stderr, "Log message construction failed\n");
+        }
+    }
 
-    PyObject *call_args = PyTuple_New(5);
-    PyTuple_SetItem(call_args, 0, PyLong_FromLong(level));           // Note: This function steals a reference.
-    PyTuple_SetItem(call_args, 1, PyUnicode_FromString(pathname));   // Note: This function steals a reference.
-    PyTuple_SetItem(call_args, 2, PyLong_FromLong(lineno));          // Note: This function steals a reference.
-    PyTuple_SetItem(call_args, 3, PyUnicode_FromString(log_buff));   // Note: This function steals a reference.
-    PyTuple_SetItem(call_args, 4, PyUnicode_FromString(funcname));
+    filename_arg = PyUnicode_FromString(pathname);      // New reference
+    if (filename_arg == NULL) {
+        goto error;
+    }
 
-    PyObject *handler_ret = PyObject_CallObject(pLogHandler, call_args);
-    Py_DECREF(call_args);
-    if (handler_ret == NULL){
-        PyErr_Print();
-        PyGILState_Release(gstate);
-        return;
+    lineno_arg = PyLong_FromLong(lineno);               // New reference
+    if (lineno_arg == NULL) {
+        goto error;
+    }
+
+    msg_arg = PyUnicode_FromString(log_buff);           // New reference
+    if (msg_arg == NULL) {
+        goto error;
+    }
+
+    function_arg = PyUnicode_FromString(funcname);      // New reference
+    if (function_arg == NULL) {
+        goto error;
+    }
+
+    // Log function args are logger_name, level, filename, lineno, msg, function
+    PyObject *handler_ret = PyObject_CallFunctionObjArgs(pLogHandler, logger_name_arg, level_arg, filename_arg, lineno_arg, msg_arg, function_arg, NULL);
+    if (handler_ret == NULL) {
+        goto error;
     }
     Py_DECREF(handler_ret);
 
+    goto ok;
+error:
+    /* Note: don't call the LOG_ERROR macro because that might recurse */
+    gpi_log_native_v(name, level, pathname, funcname, lineno, msg, argp);
+    gpi_log_native("cocotb.gpi", GPIError, __FILE__, __func__, __LINE__, "Error calling Python logging function from C while logging the above");
+    PyErr_Print();
+ok:
+    Py_XDECREF(logger_name_arg);
+    Py_XDECREF(level_arg);
+    Py_XDECREF(filename_arg);
+    Py_XDECREF(lineno_arg);
+    Py_XDECREF(msg_arg);
+    Py_XDECREF(function_arg);
     PyGILState_Release(gstate);
+}
+
+void gpi_log(const char *name, enum gpi_log_levels level, const char *pathname, const char *funcname, long lineno, const char *msg, ...)
+{
+    va_list argp;
+    va_start(argp, msg);
+    gpi_log_v(name, level, pathname, funcname, lineno, msg, argp);
+    va_end(argp);
 }

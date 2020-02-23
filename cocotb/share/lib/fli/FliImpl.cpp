@@ -191,7 +191,7 @@ GpiObjHdl *FliImpl::create_gpi_obj_from_handle(void *hdl, std::string &name, std
                             }
                             break;
                         default:
-                            new_obj = new FliValueObjHdl(this, hdl, GPI_ARRAY, false, accType, accFullType, is_var, valType, typeKind);// array of (array, Integer, Real, Record, etc.) 
+                            new_obj = new FliValueObjHdl(this, hdl, GPI_ARRAY, false, accType, accFullType, is_var, valType, typeKind);// array of (array, Integer, Real, Record, etc.)
                     }
                 }
                 break;
@@ -220,6 +220,7 @@ GpiObjHdl *FliImpl::create_gpi_obj_from_handle(void *hdl, std::string &name, std
 
 GpiObjHdl* FliImpl::native_check_create(void *raw_hdl, GpiObjHdl *parent)
 {
+    COCOTB_UNUSED(parent);
     LOG_DEBUG("Trying to convert a raw handle to an FLI Handle.");
 
     const char * c_name     = acc_fetch_name(raw_hdl);
@@ -411,6 +412,7 @@ GpiObjHdl*  FliImpl::native_check_create(int32_t index, GpiObjHdl *parent)
 
 const char *FliImpl::reason_to_string(int reason)
 {
+    COCOTB_UNUSED(reason);
     return "Who can explain it, who can tell you why?";
 }
 
@@ -423,8 +425,8 @@ const char *FliImpl::reason_to_string(int reason)
  */
 void FliImpl::get_sim_time(uint32_t *high, uint32_t *low)
 {
-    *high = mti_NowUpper();
-    *low = mti_Now();
+    *high = static_cast<uint32_t>(mti_NowUpper());  // these functions return a int32_t for some reason
+    *low = static_cast<uint32_t>(mti_Now());
 }
 
 void FliImpl::get_sim_precision(int32_t *precision)
@@ -661,13 +663,13 @@ FliIterator::FliIterator(GpiImplInterface *impl, GpiObjHdl *hdl) : GpiIterator(i
     }
 
     if (m_iterator == m_currentHandles->end()) {
-        LOG_DEBUG("fli_iterator return NULL for all relationships on %s (%d) kind:%s", 
+        LOG_DEBUG("fli_iterator return NULL for all relationships on %s (%d) kind:%s",
                   m_parent->get_name_str(), type, acc_fetch_type_str(type));
         selected = NULL;
         return;
     }
 
-    LOG_DEBUG("Created iterator working from scope %d", 
+    LOG_DEBUG("Created iterator working from scope %d",
               *one2many);
 }
 
@@ -752,8 +754,8 @@ GpiIterator::Status FliIterator::next_handle(std::string &name, GpiObjHdl **hdl,
     }
 
     char *c_name;
-    PLI_INT32 accType = 0;
-    PLI_INT32 accFullType = 0;
+    PLI_INT32 accType;
+    PLI_INT32 accFullType;
     switch (*one2many) {
         case FliIterator::OTM_CONSTANTS:
         case FliIterator::OTM_VARIABLE_SUB_ELEMENTS:
@@ -776,6 +778,9 @@ GpiIterator::Status FliIterator::next_handle(std::string &name, GpiObjHdl **hdl,
             accFullType = acc_fetch_fulltype(obj);
             break;
         default:
+            c_name = NULL;
+            accType = 0;
+            accFullType = 0;
             LOG_WARN("Unhandled OneToMany Type (%d)", *one2many);
     }
 

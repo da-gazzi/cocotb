@@ -40,7 +40,7 @@ from cocotb.triggers import RisingEdge, FallingEdge, ReadOnly, NextTimeStep, Eve
 from cocotb.drivers import BusDriver, ValidatedBusDriver
 from cocotb.utils import hexdump
 from cocotb.binary import BinaryValue
-from cocotb.result import ReturnValue, TestError
+from cocotb.result import TestError
 
 
 class AvalonMM(BusDriver):
@@ -180,7 +180,7 @@ class AvalonMaster(AvalonMM):
         data = self.bus.readdata.value
 
         self._release_lock()
-        raise ReturnValue(data)
+        return data
 
     @coroutine
     def write(self, address, value):
@@ -245,8 +245,8 @@ class AvalonMemory(BusDriver):
             }
 
     def __init__(self, entity, name, clock, readlatency_min=1,
-                 readlatency_max=1, memory=None, avl_properties={}):
-        BusDriver.__init__(self, entity, name, clock)
+                 readlatency_max=1, memory=None, avl_properties={}, **kwargs):
+        BusDriver.__init__(self, entity, name, clock, **kwargs)
 
         if avl_properties != {}:
             for key, value in self._avalon_properties.items():
@@ -466,7 +466,7 @@ class AvalonMemory(BusDriver):
                         self.log.debug("Data in   : %x", data)
                         self.log.debug("Width     : %d", self._width)
                         self.log.debug("Byteenable: %x", byteenable)
-                        for i in range(self._width/8):
+                        for i in range(self._width//8):
                             if byteenable & 2**i:
                                 mask |= 0xFF << (8*i)
                             else:
@@ -512,9 +512,9 @@ class AvalonST(ValidatedBusDriver):
 
     _default_config = {"firstSymbolInHighOrderBits" : True}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, entity, name, clock, **kwargs):
         config = kwargs.pop('config', {})
-        ValidatedBusDriver.__init__(self, *args, **kwargs)
+        ValidatedBusDriver.__init__(self, entity, name, clock, **kwargs)
 
         self.config = AvalonST._default_config.copy()
 
@@ -605,9 +605,9 @@ class AvalonSTPkts(ValidatedBusDriver):
         "readyLatency"                  : 0
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, entity, name, clock, **kwargs):
         config = kwargs.pop('config', {})
-        ValidatedBusDriver.__init__(self, *args, **kwargs)
+        ValidatedBusDriver.__init__(self, entity, name, clock, **kwargs)
 
         self.config = AvalonSTPkts._default_config.copy()
 
